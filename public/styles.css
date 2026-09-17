@@ -11,6 +11,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -372,9 +376,14 @@ tbody tr.season-detail-row:hover td {
   font-size: 0.9rem;
 }
 
-.toggle-collection-monitor-button {
+.toggle-collection-monitor-button[data-monitored="true"] {
   border-color: #806600;
   background: #806600;
+}
+
+.toggle-collection-monitor-button[data-monitored="false"] {
+  border-color: #245448;
+  background: #245448;
 }
 
 .delete-collection-button {
