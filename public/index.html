@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Cleanerr</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="header">
+        <div>
+          <h1>Cleanerr</h1>
+          <p>Library sorted by disk usage.</p>
+        </div>
+        <button id="refreshButton" type="button" aria-label="Refresh">
+          Refresh
+        </button>
+      </header>
+
+      <section class="summary" aria-live="polite">
+        <div>
+          <span class="summary-label">Items</span>
+          <strong id="itemCount">-</strong>
+        </div>
+        <div>
+          <span class="summary-label">Total size</span>
+          <strong id="totalSize">-</strong>
+        </div>
+        <div>
+          <span class="summary-label">Updated</span>
+          <strong id="updatedAt">-</strong>
+        </div>
+      </section>
+
+      <section id="errorPanel" class="error-panel" hidden></section>
+
+      <section class="controls">
+        <nav class="tabs" aria-label="Library views">
+          <button class="tab-button is-active" type="button" data-view="all">All</button>
+          <button class="tab-button" type="button" data-view="movies">Movies</button>
+          <button class="tab-button" type="button" data-view="series">Series</button>
+          <button class="tab-button" type="button" data-view="collections">Collections</button>
+        </nav>
+
+        <div class="sort-control" aria-label="Sort library">
+          <span class="control-label">Sort by</span>
+          <button class="sort-button is-active" type="button" data-sort="size">Size</button>
+          <button class="sort-button" type="button" data-sort="name">Name</button>
+        </div>
+      </section>
+
+      <section class="table-shell">
+        <div id="loadingState" class="state">Loading...</div>
+        <div id="emptyState" class="state" hidden>No content to show.</div>
+        <table id="libraryTable" hidden>
+          <thead>
+            <tr>
+              <th>Title</th>
+              <th>Type</th>
+              <th>Source</th>
+              <th>Path</th>
+              <th class="number">Size</th>
+              <th class="actions">Action</th>
+            </tr>
+          </thead>
+          <tbody id="libraryRows"></tbody>
+        </table>
+        <div id="collectionList" class="collection-list" hidden></div>
+      </section>
+    </main>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
