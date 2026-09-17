@@ -10,7 +10,7 @@ collections by size and perform monitoring or deletion actions from one place.
 
 ## Requirements
 
-- Node.js 18 or newer
+- Node.js 26
 - A reachable Radarr instance
 - A reachable Sonarr instance
 - API keys with permission to read and modify those instances
@@ -69,6 +69,42 @@ Jellyfin is not currently used by the application. Its variables are included
 so its connection details can remain centralized when that integration is
 implemented.
 
+## Docker
+
+Build and run the container with Docker Compose:
+
+```sh
+cp .env.example .env
+# Edit .env before starting the container.
+docker compose up --build -d
+```
+
+Compose publishes Cleanerr on the port configured by `PORT` in `.env`. Inside
+the container, the server always listens on `0.0.0.0:3000`, while Radarr and
+Sonarr connection details are passed from `.env` at runtime.
+
+To use an image from a registry instead of building locally:
+
+```sh
+IMAGE=registry.example.com/group/cleanerr:latest docker compose up -d
+```
+
+The `.env` file is excluded from the Docker build context, so service API keys
+are not stored in the image.
+
+## GitLab CI
+
+The GitLab pipeline follows the Buildah-based setup used by the Minesweeper
+project. A commit on `main` builds the image and pushes both of these tags to
+the GitLab Container Registry:
+
+- `$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA`
+- `$CI_REGISTRY_IMAGE:latest`
+
+The pipeline uses GitLab's predefined registry variables, so no Radarr or
+Sonarr credentials are needed during the image build. Runtime configuration
+must be supplied when the container is deployed.
+
 ## Security
 
 The real `.env` file is excluded from Git. Do not commit it or expose the API
@@ -79,4 +115,5 @@ safe configuration template.
 
 The server uses Node.js without a build step and serves the files in `public/`.
 After changing server-side code, restart `npm start`. Browser assets can be
-refreshed directly.
+refreshed directly. The same Node.js major version is used for local development
+and the container image.

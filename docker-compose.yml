@@ -1,0 +1,13 @@
+services:
+  cleanerr:
+    build: .
+    image: ${IMAGE:-cleanerr:latest}
+    restart: unless-stopped
+    container_name: cleanerr
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+    ports:
+      - "${PORT:-3000}:3000"
