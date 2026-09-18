@@ -1,53 +1,24 @@
-import "dotenv/config";
+import { readFileSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
-function required(name) {
-  const value = process.env[name]?.trim();
-  if (!value) throw new Error(`Missing required environment variable: ${name}`);
-  return value;
-}
+const rootDir = dirname(fileURLToPath(import.meta.url));
+const rawConfig = JSON.parse(readFileSync(resolve(rootDir, "config.json"), "utf8"));
+const host = String(rawConfig.server?.host || "").trim();
+const port = Number(rawConfig.server?.port);
+const configuredDataDirectory = process.env.CLEANERR_DATA_DIR?.trim();
+const dataDirectory = configuredDataDirectory
+  ? resolve(configuredDataDirectory)
+  : process.env.NODE_ENV === "production"
+    ? "/data"
+    : resolve(rootDir, "data");
 
-function serviceConfig(label, prefix) {
-  const rawUrl = required(`${prefix}_URL`);
-
-  try {
-    return {
-      label,
-      url: new URL(rawUrl).toString().replace(/\/$/, ""),
-      apiKey: required(`${prefix}_API_KEY`),
-    };
-  } catch (error) {
-    if (error instanceof TypeError) {
-      throw new Error(`${prefix}_URL must be a valid absolute URL`);
-    }
-    throw error;
-  }
-}
-
-function optionalUrl(name) {
-  const value = process.env[name]?.trim();
-  if (!value) return "";
-
-  try {
-    return new URL(value).toString().replace(/\/$/, "");
-  } catch {
-    throw new Error(`${name} must be a valid absolute URL`);
-  }
-}
-
-const port = Number(required("PORT"));
+if (!host) throw new Error("config.json: server.host is required");
 if (!Number.isInteger(port) || port < 1 || port > 65535) {
-  throw new Error("PORT must be an integer between 1 and 65535");
+  throw new Error("config.json: server.port must be an integer between 1 and 65535");
 }
-
 export const config = {
-  host: required("HOST"),
+  host,
   port,
-  services: {
-    radarr: serviceConfig("Radarr", "RADARR"),
-    sonarr: serviceConfig("Sonarr", "SONARR"),
-  },
-  jellyfin: {
-    url: optionalUrl("JELLYFIN_URL"),
-    apiKey: process.env.JELLYFIN_API_KEY?.trim() || "",
-  },
+  settingsFile: resolve(dataDirectory, "config.json"),
 };

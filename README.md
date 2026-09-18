@@ -20,68 +20,46 @@ collections by size and perform monitoring or deletion actions from one place.
 
 ```sh
 npm install
-cp .env.example .env
-```
-
-Edit `.env` with the addresses and API keys for your services, then start the
-application:
-
-```sh
 npm start
 ```
 
-By default, the example configuration makes the interface available at
-<http://127.0.0.1:3000>.
+Open <http://localhost:3050>. A new installation opens Settings, where each
+service can be configured and tested independently.
 
 ## Configuration
 
-All deployment-specific configuration is loaded from `.env`:
+The Settings page stores these six values:
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `HOST` | Yes | Address on which Cleanerr listens. |
-| `PORT` | Yes | Port on which Cleanerr listens. |
-| `RADARR_URL` | Yes | Base URL of the Radarr instance. |
-| `RADARR_API_KEY` | Yes | Radarr API key. |
-| `SONARR_URL` | Yes | Base URL of the Sonarr instance. |
-| `SONARR_API_KEY` | Yes | Sonarr API key. |
-| `JELLYFIN_URL` | No | Reserved for a future Jellyfin integration. |
-| `JELLYFIN_API_KEY` | No | Reserved for a future Jellyfin integration. |
+- Radarr URL and API key
+- Sonarr URL and API key
+- Jellyfin URL and API key
 
-Example:
+Every service has separate **Test connection** and **Save** actions. Saved API
+keys are never sent back to the browser; leave the API key field empty to keep
+the existing value. Jellyfin can be configured and tested now, although its
+library is not yet displayed by Cleanerr.
 
-```dotenv
-HOST=127.0.0.1
-PORT=3000
+During local development, settings are written to `data/config.json`. The
+Docker image sets `NODE_ENV=production`, which changes the location to
+`/data/config.json` so the complete `/data` directory can be mounted as a
+persistent volume. `CLEANERR_DATA_DIR` can optionally override the directory in
+unusual deployments; normal local and Docker usage does not need it.
 
-RADARR_URL=http://radarr:7878
-RADARR_API_KEY=replace-with-your-radarr-api-key
-
-SONARR_URL=http://sonarr:8989
-SONARR_API_KEY=replace-with-your-sonarr-api-key
-```
-
-The application validates required variables during startup and stops with a
-clear error if any value is missing or invalid. A trailing slash in a service
-URL is removed automatically.
-
-Jellyfin is not currently used by the application. Its variables are included
-so its connection details can remain centralized when that integration is
-implemented.
+The web server always listens on `0.0.0.0:3050`. These internal values live in
+the committed application [config.json](config.json), not in the Settings page.
+Developers can temporarily edit that file locally if necessary.
 
 ## Docker
 
 Build and run the container with Docker Compose:
 
 ```sh
-cp .env.example .env
-# Edit .env before starting the container.
 docker compose up --build -d
 ```
 
-Compose publishes Cleanerr on the port configured by `PORT` in `.env`. Inside
-the container, the server always listens on `0.0.0.0:3000`, while Radarr and
-Sonarr connection details are passed from `.env` at runtime.
+Compose publishes Cleanerr at <http://localhost:3050> and keeps its settings in
+the `cleanerr-data` volume. To expose a different host port, change only the
+left side of the mapping, for example `8080:3050`.
 
 To use an image from a registry instead of building locally:
 
@@ -89,8 +67,8 @@ To use an image from a registry instead of building locally:
 IMAGE=registry.example.com/group/cleanerr:latest docker compose up -d
 ```
 
-The `.env` file is excluded from the Docker build context, so service API keys
-are not stored in the image.
+Service URLs and API keys are created at runtime in `/data/config.json`; they
+are never stored in the image.
 
 ## GitLab CI
 
@@ -103,13 +81,15 @@ the GitLab Container Registry:
 
 The pipeline uses GitLab's predefined registry variables, so no Radarr or
 Sonarr credentials are needed during the image build. Runtime configuration
-must be supplied when the container is deployed.
+is entered through Settings after the container is deployed.
 
 ## Security
 
-The real `.env` file is excluded from Git. Do not commit it or expose the API
-keys in screenshots, logs, issues, or pull requests. Use `.env.example` as the
-safe configuration template.
+The runtime `data/` directory is excluded from Git and from the Docker build
+context. Do not commit `/data/config.json` or expose API keys in screenshots,
+logs, issues, or pull requests. Anyone who can access Settings can replace the
+service configuration, so place Cleanerr behind the same access controls used
+for the rest of your media services.
 
 ## Development
 

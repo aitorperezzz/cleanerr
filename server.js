@@ -5,12 +5,39 @@ import { extname, join, normalize } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
+import {
+  loadSettings,
+  normalizeServiceSettings,
+  publicSettings,
+  saveSettings,
+  validateServiceName,
+} from "./settings-store.js";
 
 const __dirname = fileURLToPath(new URL(".", import.meta.url));
 const publicDir = join(__dirname, "public");
 const execFileAsync = promisify(execFile);
 
-const { host: HOST, port: PORT, services } = config;
+const { host: HOST, port: PORT } = config;
+const serviceLabels = { radarr: "Radarr", sonarr: "Sonarr", jellyfin: "Jellyfin" };
+let settings = await loadSettings(config.settingsFile);
+let services = buildServices(settings);
+
+function buildServices(currentSettings) {
+  return Object.fromEntries(
+    Object.entries(serviceLabels).map(([name, label]) => [
+      name,
+      { label, ...currentSettings[name] },
+    ]),
+  );
+}
+
+function requireConfiguredService(service) {
+  if (!service?.url || !service.apiKey) {
+    const error = new Error(`${service?.label || "Service"} is not configured`);
+    error.status = 503;
+    throw error;
+  }
+}
 
 const contentTypes = {
   ".html": "text/html; charset=utf-8",
@@ -47,6 +74,7 @@ function getPosterUrl(serviceName, images = []) {
 }
 
 async function fetchJson(service, endpoint) {
+  requireConfiguredService(service);
   const url = `${service.url}/api/v3/${endpoint}`;
   let response;
 
@@ -70,6 +98,7 @@ async function fetchJson(service, endpoint) {
 }
 
 async function sendJson(service, endpoint, method, body) {
+  requireConfiguredService(service);
   const url = `${service.url}/api/v3/${endpoint}`;
   let response;
 
@@ -98,6 +127,7 @@ async function sendJson(service, endpoint, method, body) {
 }
 
 async function deleteEndpoint(service, url) {
+  requireConfiguredService(service);
   let response;
 
   try {
@@ -127,6 +157,7 @@ async function curlJson(service, url, options = {}) {
 }
 
 async function curlText(service, url, { method = "GET", body } = {}) {
+  requireConfiguredService(service);
   const args = [
     "-sS",
     "-L",
@@ -172,11 +203,13 @@ async function proxyMedia(req, res) {
     return;
   }
 
+  requireConfiguredService(service);
+
   const mediaUrl = new URL(`${service.url}${path}`);
   mediaUrl.searchParams.set("apikey", service.apiKey);
 
   const response = await fetch(mediaUrl, {
-    method,
+    method: req.method,
     headers: {
       "X-Api-Key": service.apiKey,
       accept: "image/*",
@@ -452,6 +485,118 @@ async function handleApiLibrary(req, res) {
   });
 }
 
+async function readJsonBody(req) {
+  const chunks = [];
+  let size = 0;
+
+  for await (const chunk of req) {
+    size += chunk.length;
+    if (size > 64 * 1024) {
+      const error = new Error("Request body is too large");
+      error.status = 413;
+      throw error;
+    }
+    chunks.push(chunk);
+  }
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}");
+  } catch {
+    const error = new Error("Request body must be valid JSON");
+    error.status = 400;
+    throw error;
+  }
+}
+
+async function testServiceConnection(serviceName, input) {
+  validateServiceName(serviceName);
+  const candidate = normalizeServiceSettings(input, settings[serviceName]);
+  const isJellyfin = serviceName === "jellyfin";
+  const endpoint = isJellyfin ? "System/Info" : "api/v3/system/status";
+  const url = `${candidate.url}/${endpoint}`;
+  let response;
+
+  try {
+    response = await fetch(url, {
+      headers: isJellyfin
+        ? {
+            Authorization: `MediaBrowser Client="Cleanerr", Device="Cleanerr", DeviceId="cleanerr", Version="0.1.0", Token="${candidate.apiKey}"`,
+            "X-Emby-Token": candidate.apiKey,
+            accept: "application/json",
+          }
+        : { "X-Api-Key": candidate.apiKey, accept: "application/json" },
+      signal: AbortSignal.timeout(10000),
+    });
+  } catch (cause) {
+    const error = new Error(`Could not connect to ${serviceLabels[serviceName]}`);
+    error.status = 502;
+    error.cause = cause;
+    throw error;
+  }
+
+  if (!response.ok) {
+    const message =
+      response.status === 401
+        ? `${serviceLabels[serviceName]} rejected the API key (401 Unauthorized)`
+        : response.status === 403
+          ? `${serviceLabels[serviceName]} connected, but the API key lacks permission (403 Forbidden)`
+          : `${serviceLabels[serviceName]} responded ${response.status}`;
+    const error = new Error(message);
+    error.status = 502;
+    throw error;
+  }
+
+  const status = await response.json().catch(() => ({}));
+  return {
+    ok: true,
+    name:
+      status.instanceName ||
+      status.appName ||
+      status.ServerName ||
+      serviceLabels[serviceName],
+    version: status.version || status.Version || "",
+  };
+}
+
+async function handleSettings(req, res) {
+  const { pathname } = new URL(req.url, `http://${req.headers.host}`);
+
+  if ((req.method === "GET" || req.method === "HEAD") && pathname === "/api/settings") {
+    jsonResponse(res, 200, publicSettings(settings));
+    return;
+  }
+
+  const match = pathname.match(/^\/api\/settings\/(radarr|sonarr|jellyfin)(\/test)?$/);
+  if (!match) {
+    jsonResponse(res, 404, { error: "Not found" });
+    return;
+  }
+
+  const [, serviceName, action] = match;
+  const body = await readJsonBody(req);
+
+  if (req.method === "POST" && action === "/test") {
+    const connection = await testServiceConnection(serviceName, body);
+    jsonResponse(res, 200, { connection });
+    return;
+  }
+
+  if (req.method === "PUT" && !action) {
+    const serviceSettings = normalizeServiceSettings(body, settings[serviceName]);
+    const nextSettings = { ...settings, [serviceName]: serviceSettings };
+    await saveSettings(config.settingsFile, nextSettings);
+    settings = nextSettings;
+    services = buildServices(settings);
+    jsonResponse(res, 200, {
+      service: publicSettings(settings).services[serviceName],
+      complete: publicSettings(settings).complete,
+    });
+    return;
+  }
+
+  jsonResponse(res, 405, { error: "Method not allowed" });
+}
+
 async function handleApiCollections(req, res) {
   const collections = await getRadarrCollections();
 
@@ -642,6 +787,11 @@ async function serveStatic(req, res) {
 
 const server = createServer(async (req, res) => {
   try {
+    if (req.url?.startsWith("/api/settings")) {
+      await handleSettings(req, res);
+      return;
+    }
+
     if ((req.method === "GET" || req.method === "HEAD") && req.url?.startsWith("/api/media")) {
       await proxyMedia(req, res);
       return;
@@ -674,7 +824,7 @@ const server = createServer(async (req, res) => {
 
     jsonResponse(res, 405, { error: "Method not allowed" });
   } catch (error) {
-    jsonResponse(res, 500, { error: error.message || "Internal server error" });
+    jsonResponse(res, error.status || 500, { error: error.message || "Internal server error" });
   }
 });
 

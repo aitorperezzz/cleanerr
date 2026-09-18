@@ -10,11 +10,28 @@ const updatedAt = document.querySelector("#updatedAt");
 const errorPanel = document.querySelector("#errorPanel");
 const tabButtons = document.querySelectorAll(".tab-button");
 const sortButtons = document.querySelectorAll(".sort-button");
+const summary = document.querySelector("#summary");
+const controls = document.querySelector("#controls");
+const libraryPanel = document.querySelector("#libraryPanel");
+const settingsPanel = document.querySelector("#settingsPanel");
+const viewTitle = document.querySelector("#viewTitle");
+const viewDescription = document.querySelector("#viewDescription");
+const serviceForms = document.querySelectorAll(".service-settings");
+const brand = document.querySelector(".brand");
 
 let libraryItems = [];
 let collectionItems = [];
+let settingsState = null;
 let activeView = "all";
 let activeSort = "size";
+
+const viewCopy = {
+  all: ["Overview", "Your library sorted by disk usage."],
+  movies: ["Movies", "Movies managed by Radarr."],
+  series: ["Shows", "Shows and seasons managed by Sonarr."],
+  collections: ["Collections", "Movie collections managed by Radarr."],
+  settings: ["Settings", "Connect Cleanerr to your media services."],
+};
 
 const sizeFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
@@ -47,6 +64,21 @@ function renderErrors(errors) {
   errorPanel.textContent = errors
     .map((error) => `${error.source}: ${error.message}`)
     .join(" · ");
+}
+
+async function readJsonResponse(response) {
+  const text = await response.text();
+
+  try {
+    return JSON.parse(text);
+  } catch {
+    if (response.status === 404) {
+      throw new Error(
+        "The server is running an older version. Restart Cleanerr and open it on port 3050.",
+      );
+    }
+    throw new Error(`Cleanerr returned an invalid response (${response.status})`);
+  }
 }
 
 function normalizeTitle(title) {
@@ -302,10 +334,48 @@ function renderCollections() {
   );
 }
 
+function renderServiceSettings(form, service) {
+  const status = form.querySelector(".service-status");
+  const apiKey = form.elements.apiKey;
+  form.elements.url.value = service.url || "";
+  apiKey.value = "";
+  apiKey.placeholder = service.apiKeyConfigured ? "Saved — leave empty to keep" : "Enter API key";
+  status.textContent = service.configured ? "Configured" : "Not configured";
+  status.classList.toggle("is-configured", service.configured);
+}
+
+function renderSettings() {
+  if (!settingsState) return;
+  serviceForms.forEach((form) => {
+    renderServiceSettings(form, settingsState.services[form.dataset.service]);
+  });
+}
+
+function selectView(view) {
+  activeView = view;
+  tabButtons.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.view === view);
+  });
+}
+
 function renderView() {
+  const [title, description] = viewCopy[activeView];
+  const isSettingsView = activeView === "settings";
   const isCollectionsView = activeView === "collections";
+  viewTitle.textContent = title;
+  viewDescription.textContent = description;
+  refreshButton.hidden = isSettingsView;
+  summary.hidden = isSettingsView;
+  controls.hidden = isSettingsView;
+  libraryPanel.hidden = isSettingsView;
+  settingsPanel.hidden = !isSettingsView;
   table.hidden = true;
   collectionList.hidden = true;
+
+  if (isSettingsView) {
+    renderSettings();
+    return;
+  }
 
   if (isCollectionsView) {
     const visibleCollections = getVisibleCollections();
@@ -357,7 +427,7 @@ async function deleteItem(row) {
       ? `/api/library/radarr/${row.dataset.id}/collection-safe`
       : `/api/library/${row.dataset.service}/${row.dataset.id}`;
     const response = await fetch(endpoint, { method: "DELETE" });
-    const data = await response.json();
+    const data = await readJsonResponse(response);
 
     if (!response.ok) {
       throw new Error(data.error || "Could not delete the library item");
@@ -386,7 +456,7 @@ async function monitorSeries(row) {
     const response = await fetch(`/api/library/sonarr/${row.dataset.id}/monitor`, {
       method: "PATCH",
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response);
 
     if (!response.ok) {
       throw new Error(data.error || "Could not monitor the series");
@@ -422,7 +492,7 @@ async function removeSeason(seasonItem) {
       `/api/library/sonarr/${seasonItem.dataset.seriesId}/seasons/${seasonItem.dataset.seasonNumber}`,
       { method: "DELETE" },
     );
-    const data = await response.json();
+    const data = await readJsonResponse(response);
 
     if (!response.ok) {
       throw new Error(data.error || "Could not remove the season");
@@ -455,7 +525,7 @@ async function monitorSeason(seasonItem) {
       `/api/library/sonarr/${seasonItem.dataset.seriesId}/seasons/${seasonItem.dataset.seasonNumber}/monitor`,
       { method: "PATCH" },
     );
-    const data = await response.json();
+    const data = await readJsonResponse(response);
 
     if (!response.ok) {
       throw new Error(data.error || "Could not monitor the season");
@@ -488,7 +558,7 @@ async function setCollectionMonitoring(card) {
     const response = await fetch(`/api/collections/${card.dataset.id}/${action}`, {
       method: "PATCH",
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response);
 
     if (!response.ok) {
       throw new Error(data.error || "Could not unmonitor the collection");
@@ -520,7 +590,7 @@ async function deleteCollection(card) {
     const response = await fetch(`/api/collections/${card.dataset.id}`, {
       method: "DELETE",
     });
-    const data = await response.json();
+    const data = await readJsonResponse(response);
 
     if (!response.ok) {
       throw new Error(data.error || "Could not delete the collection");
@@ -532,6 +602,83 @@ async function deleteCollection(card) {
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Delete collection";
+  }
+}
+
+function formPayload(form) {
+  return {
+    url: form.elements.url.value.trim(),
+    apiKey: form.elements.apiKey.value.trim(),
+  };
+}
+
+function showConnectionResult(form, message, type = "") {
+  const result = form.querySelector(".connection-result");
+  result.textContent = message;
+  result.classList.toggle("is-success", type === "success");
+  result.classList.toggle("is-error", type === "error");
+}
+
+async function loadSettings() {
+  const response = await fetch("/api/settings", { cache: "no-store" });
+  const data = await readJsonResponse(response);
+  if (!response.ok) throw new Error(data.error || "Could not load settings");
+  settingsState = data;
+  renderSettings();
+  return data;
+}
+
+async function testConnection(form) {
+  const button = form.querySelector(".test-connection-button");
+  button.disabled = true;
+  button.classList.add("is-busy");
+  button.textContent = "Testing...";
+  showConnectionResult(form, "");
+
+  try {
+    const response = await fetch(`/api/settings/${form.dataset.service}/test`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(formPayload(form)),
+    });
+    const data = await readJsonResponse(response);
+    if (!response.ok) throw new Error(data.error || "Connection failed");
+    const detail = data.connection.version ? ` · version ${data.connection.version}` : "";
+    showConnectionResult(form, `Connected to ${data.connection.name}${detail}`, "success");
+  } catch (error) {
+    showConnectionResult(form, error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-busy");
+    button.textContent = "Test connection";
+  }
+}
+
+async function saveServiceSettings(form) {
+  const button = form.querySelector('button[type="submit"]');
+  button.disabled = true;
+  button.classList.add("is-busy");
+  button.textContent = "Saving...";
+  showConnectionResult(form, "");
+
+  try {
+    const response = await fetch(`/api/settings/${form.dataset.service}`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(formPayload(form)),
+    });
+    const data = await readJsonResponse(response);
+    if (!response.ok) throw new Error(data.error || "Could not save settings");
+    settingsState.services[form.dataset.service] = data.service;
+    settingsState.complete = data.complete;
+    renderServiceSettings(form, data.service);
+    showConnectionResult(form, "Settings saved", "success");
+  } catch (error) {
+    showConnectionResult(form, error.message, "error");
+  } finally {
+    button.disabled = false;
+    button.classList.remove("is-busy");
+    button.textContent = "Save";
   }
 }
 
@@ -549,8 +696,8 @@ async function loadLibrary() {
       fetch(`/api/library?refresh=${refresh}`, { cache: "no-store" }),
       fetch(`/api/collections?refresh=${refresh}`, { cache: "no-store" }),
     ]);
-    const data = await libraryResponse.json();
-    const collectionsData = await collectionsResponse.json();
+    const data = await readJsonResponse(libraryResponse);
+    const collectionsData = await readJsonResponse(collectionsResponse);
 
     if (!libraryResponse.ok && libraryResponse.status !== 207) {
       throw new Error(data.error || "Could not load the library");
@@ -580,13 +727,22 @@ async function loadLibrary() {
 }
 
 refreshButton.addEventListener("click", loadLibrary);
+brand.addEventListener("click", async (event) => {
+  event.preventDefault();
+  selectView("all");
+  renderErrors([]);
+  renderView();
+  if (libraryItems.length === 0) await loadLibrary();
+});
+
 tabButtons.forEach((button) => {
-  button.addEventListener("click", () => {
-    activeView = button.dataset.view;
-    tabButtons.forEach((tabButton) => {
-      tabButton.classList.toggle("is-active", tabButton === button);
-    });
+  button.addEventListener("click", async () => {
+    selectView(button.dataset.view);
     renderView();
+
+    if (activeView !== "settings" && libraryItems.length === 0) {
+      await loadLibrary();
+    }
   });
 });
 sortButtons.forEach((button) => {
@@ -633,4 +789,34 @@ collectionList.addEventListener("click", (event) => {
     deleteCollection(deleteButton.closest(".collection-card"));
   }
 });
-loadLibrary();
+
+serviceForms.forEach((form) => {
+  form.addEventListener("submit", (event) => {
+    event.preventDefault();
+    saveServiceSettings(form);
+  });
+  form.querySelector(".test-connection-button").addEventListener("click", () => {
+    testConnection(form);
+  });
+});
+
+async function initialize() {
+  try {
+    const currentSettings = await loadSettings();
+    if (!currentSettings.complete) {
+      selectView("settings");
+      renderView();
+      return;
+    }
+    await loadLibrary();
+  } catch (error) {
+    selectView("settings");
+    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    renderView();
+  } finally {
+    loadingState.hidden = true;
+    refreshButton.disabled = false;
+  }
+}
+
+initialize();

@@ -7,68 +7,138 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
-    <main class="app">
-      <header class="header">
-        <div>
-          <h1>Cleanerr</h1>
-          <p>Library sorted by disk usage.</p>
-        </div>
-        <button id="refreshButton" type="button" aria-label="Refresh">
-          Refresh
-        </button>
-      </header>
-
-      <section class="summary" aria-live="polite">
-        <div>
-          <span class="summary-label">Items</span>
-          <strong id="itemCount">-</strong>
-        </div>
-        <div>
-          <span class="summary-label">Total size</span>
-          <strong id="totalSize">-</strong>
-        </div>
-        <div>
-          <span class="summary-label">Updated</span>
-          <strong id="updatedAt">-</strong>
-        </div>
-      </section>
-
-      <section id="errorPanel" class="error-panel" hidden></section>
-
-      <section class="controls">
-        <nav class="tabs" aria-label="Library views">
-          <button class="tab-button is-active" type="button" data-view="all">All</button>
-          <button class="tab-button" type="button" data-view="movies">Movies</button>
-          <button class="tab-button" type="button" data-view="series">Series</button>
-          <button class="tab-button" type="button" data-view="collections">Collections</button>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="#overview" aria-label="Go to Overview">
+          <span class="brand-mark">C</span>
+          <span>Cleanerr</span>
+        </a>
+        <nav class="tabs" aria-label="Main navigation">
+          <button class="tab-button is-active" type="button" data-view="all">
+            <span class="nav-icon" aria-hidden="true">⌂</span><span>Overview</span>
+          </button>
+          <button class="tab-button" type="button" data-view="movies">
+            <span class="nav-icon" aria-hidden="true">▣</span><span>Movies</span>
+          </button>
+          <button class="tab-button" type="button" data-view="series">
+            <span class="nav-icon" aria-hidden="true">▤</span><span>Shows</span>
+          </button>
+          <button class="tab-button" type="button" data-view="collections">
+            <span class="nav-icon" aria-hidden="true">◆</span><span>Collections</span>
+          </button>
+          <button class="tab-button settings-nav-button" type="button" data-view="settings">
+            <span class="nav-icon" aria-hidden="true">⚙</span><span>Settings</span>
+          </button>
         </nav>
+      </aside>
 
-        <div class="sort-control" aria-label="Sort library">
-          <span class="control-label">Sort by</span>
-          <button class="sort-button is-active" type="button" data-sort="size">Size</button>
-          <button class="sort-button" type="button" data-sort="name">Name</button>
-        </div>
-      </section>
+      <main class="app">
+        <header class="header">
+          <div>
+            <h1 id="viewTitle">Overview</h1>
+            <p id="viewDescription">Your library sorted by disk usage.</p>
+          </div>
+          <button id="refreshButton" type="button" aria-label="Refresh library">Refresh</button>
+        </header>
 
-      <section class="table-shell">
-        <div id="loadingState" class="state">Loading...</div>
-        <div id="emptyState" class="state" hidden>No content to show.</div>
-        <table id="libraryTable" hidden>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Type</th>
-              <th>Source</th>
-              <th>Path</th>
-              <th class="number">Size</th>
-              <th class="actions">Action</th>
-            </tr>
-          </thead>
-          <tbody id="libraryRows"></tbody>
-        </table>
-        <div id="collectionList" class="collection-list" hidden></div>
-      </section>
-    </main>
+        <section id="summary" class="summary" aria-live="polite">
+          <div>
+            <span class="summary-label">Items</span>
+            <strong id="itemCount">-</strong>
+          </div>
+          <div>
+            <span class="summary-label">Total size</span>
+            <strong id="totalSize">-</strong>
+          </div>
+          <div>
+            <span class="summary-label">Updated</span>
+            <strong id="updatedAt">-</strong>
+          </div>
+        </section>
+
+        <section id="errorPanel" class="error-panel" hidden></section>
+
+        <section id="controls" class="controls">
+          <div class="sort-control" aria-label="Sort library">
+            <span class="control-label">Sort by</span>
+            <button class="sort-button is-active" type="button" data-sort="size">Size</button>
+            <button class="sort-button" type="button" data-sort="name">Name</button>
+          </div>
+        </section>
+
+        <section id="libraryPanel" class="table-shell">
+          <div id="loadingState" class="state">Loading...</div>
+          <div id="emptyState" class="state" hidden>No content to show.</div>
+          <table id="libraryTable" hidden>
+            <thead>
+              <tr>
+                <th>Title</th>
+                <th>Type</th>
+                <th>Source</th>
+                <th>Path</th>
+                <th class="number">Size</th>
+                <th class="actions">Action</th>
+              </tr>
+            </thead>
+            <tbody id="libraryRows"></tbody>
+          </table>
+          <div id="collectionList" class="collection-list" hidden></div>
+        </section>
+
+        <section id="settingsPanel" class="settings-panel" hidden>
+          <div class="settings-intro">
+            <h2>Services</h2>
+            <p>Connect the services Cleanerr uses. API keys are stored only on the server.</p>
+          </div>
+          <div class="settings-grid">
+            <form class="service-settings" data-service="radarr">
+              <div class="service-heading">
+                <div><span class="service-mark radarr-mark">R</span><h2>Radarr</h2></div>
+                <span class="service-status">Not configured</span>
+              </div>
+              <label>Server URL<input name="url" type="url" placeholder="http://radarr:7878" required /></label>
+              <label>API key<input name="apiKey" type="password" autocomplete="off" placeholder="Enter API key" /></label>
+              <p class="field-hint">Leave the API key empty to keep the saved value.</p>
+              <div class="settings-actions">
+                <button class="test-connection-button secondary-button" type="button">Test connection</button>
+                <button type="submit">Save</button>
+              </div>
+              <p class="connection-result" aria-live="polite"></p>
+            </form>
+
+            <form class="service-settings" data-service="sonarr">
+              <div class="service-heading">
+                <div><span class="service-mark sonarr-mark">S</span><h2>Sonarr</h2></div>
+                <span class="service-status">Not configured</span>
+              </div>
+              <label>Server URL<input name="url" type="url" placeholder="http://sonarr:8989" required /></label>
+              <label>API key<input name="apiKey" type="password" autocomplete="off" placeholder="Enter API key" /></label>
+              <p class="field-hint">Leave the API key empty to keep the saved value.</p>
+              <div class="settings-actions">
+                <button class="test-connection-button secondary-button" type="button">Test connection</button>
+                <button type="submit">Save</button>
+              </div>
+              <p class="connection-result" aria-live="polite"></p>
+            </form>
+
+            <form class="service-settings" data-service="jellyfin">
+              <div class="service-heading">
+                <div><span class="service-mark jellyfin-mark">J</span><h2>Jellyfin</h2></div>
+                <span class="service-status">Not configured</span>
+              </div>
+              <label>Server URL<input name="url" type="url" placeholder="http://jellyfin:8096" required /></label>
+              <label>API key<input name="apiKey" type="password" autocomplete="off" placeholder="Enter API key" /></label>
+              <p class="field-hint">Leave the API key empty to keep the saved value.</p>
+              <div class="settings-actions">
+                <button class="test-connection-button secondary-button" type="button">Test connection</button>
+                <button type="submit">Save</button>
+              </div>
+              <p class="connection-result" aria-live="polite"></p>
+            </form>
+          </div>
+        </section>
+      </main>
+    </div>
 
     <script src="/app.js" type="module"></script>
   </body>

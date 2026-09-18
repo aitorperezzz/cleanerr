@@ -2,18 +2,21 @@ FROM node:26-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl \
+    && mkdir -p /data \
+    && chown node:node /data
 
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-COPY config.js server.js ./
+COPY config.js config.json settings-store.js server.js ./
 COPY public ./public
 
-ENV HOST=0.0.0.0 \
-    PORT=3000
+ENV NODE_ENV=production
 
-EXPOSE 3000
+EXPOSE 3050
+
+VOLUME ["/data"]
 
 USER node
 
