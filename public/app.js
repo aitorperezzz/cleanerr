@@ -18,12 +18,14 @@ const viewTitle = document.querySelector("#viewTitle");
 const viewDescription = document.querySelector("#viewDescription");
 const serviceForms = document.querySelectorAll(".service-settings");
 const brand = document.querySelector(".brand");
+const searchInput = document.querySelector("#searchInput");
 
 let libraryItems = [];
 let collectionItems = [];
 let settingsState = null;
 let activeView = "all";
 let activeSort = "size";
+let activeQuery = "";
 
 const viewCopy = {
   all: ["Overview", "Your library sorted by disk usage."],
@@ -88,6 +90,18 @@ function normalizeTitle(title) {
     .trim();
 }
 
+function normalizeSearchValue(value) {
+  return String(value || "")
+    .normalize("NFD")
+    .replace(/\p{Diacritic}/gu, "")
+    .toLocaleLowerCase("en-US");
+}
+
+function matchesSearch(values) {
+  if (!activeQuery) return true;
+  return values.some((value) => normalizeSearchValue(value).includes(activeQuery));
+}
+
 function sortItems(items) {
   return [...items].sort((a, b) => {
     if (activeSort === "name") {
@@ -114,11 +128,28 @@ function getVisibleItems() {
   let items = libraryItems;
   if (activeView === "movies") items = libraryItems.filter((item) => item.service === "radarr");
   if (activeView === "series") items = libraryItems.filter((item) => item.service === "sonarr");
+  items = items.filter((item) =>
+    matchesSearch([
+      item.title,
+      item.year,
+      item.type,
+      item.source,
+      item.path,
+      item.collection,
+    ]),
+  );
   return sortItems(items);
 }
 
 function getVisibleCollections() {
-  return sortCollections(collectionItems);
+  return sortCollections(
+    collectionItems.filter((collection) =>
+      matchesSearch([
+        collection.title,
+        ...(collection.movies || []).flatMap((movie) => [movie.title, movie.year, movie.path]),
+      ]),
+    ),
+  );
 }
 
 function renderRows() {
@@ -386,6 +417,7 @@ function renderView() {
     );
 
     const hasCollections = visibleCollections.length > 0;
+    emptyState.textContent = activeQuery ? "No matching results." : "No content to show.";
     collectionList.hidden = !hasCollections;
     emptyState.hidden = hasCollections;
     return;
@@ -399,6 +431,7 @@ function renderView() {
   );
 
   const hasItems = visibleItems.length > 0;
+  emptyState.textContent = activeQuery ? "No matching results." : "No content to show.";
   table.hidden = !hasItems;
   emptyState.hidden = hasItems;
 }
@@ -753,6 +786,16 @@ sortButtons.forEach((button) => {
     });
     renderView();
   });
+});
+searchInput.addEventListener("input", () => {
+  activeQuery = normalizeSearchValue(searchInput.value.trim());
+  renderView();
+});
+searchInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape" || !searchInput.value) return;
+  searchInput.value = "";
+  activeQuery = "";
+  renderView();
 });
 rows.addEventListener("click", (event) => {
   const monitorSeriesButton = event.target.closest(".monitor-series-button");
