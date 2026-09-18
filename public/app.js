@@ -4,13 +4,11 @@ const emptyState = document.querySelector("#emptyState");
 const table = document.querySelector("#libraryTable");
 const rows = document.querySelector("#libraryRows");
 const collectionList = document.querySelector("#collectionList");
-const itemCount = document.querySelector("#itemCount");
-const totalSize = document.querySelector("#totalSize");
 const updatedAt = document.querySelector("#updatedAt");
 const errorPanel = document.querySelector("#errorPanel");
 const tabButtons = document.querySelectorAll(".tab-button");
 const sortButtons = document.querySelectorAll(".sort-button");
-const summary = document.querySelector("#summary");
+const statusBar = document.querySelector("#statusBar");
 const controls = document.querySelector("#controls");
 const libraryPanel = document.querySelector("#libraryPanel");
 const settingsPanel = document.querySelector("#settingsPanel");
@@ -19,13 +17,23 @@ const viewDescription = document.querySelector("#viewDescription");
 const serviceForms = document.querySelectorAll(".service-settings");
 const brand = document.querySelector(".brand");
 const searchInput = document.querySelector("#searchInput");
+const confirmationNotice = document.querySelector("#confirmationNotice");
+const confirmationMessage = document.querySelector("#confirmationMessage");
+const storageStateElement = document.querySelector("#storageState");
+const storageList = document.querySelector("#storageList");
+const storageUpdatedAt = document.querySelector("#storageUpdatedAt");
 
 let libraryItems = [];
 let collectionItems = [];
 let settingsState = null;
+let storageState = null;
 let activeView = "all";
 let activeSort = "size";
 let activeQuery = "";
+let lastUpdatedAt = "";
+let searchRenderTimer = null;
+
+const searchTextCache = new WeakMap();
 
 const viewCopy = {
   all: ["Overview", "Your library sorted by disk usage."],
@@ -34,6 +42,18 @@ const viewCopy = {
   collections: ["Collections", "Movie collections managed by Radarr."],
   settings: ["Settings", "Connect Cleanerr to your media services."],
 };
+
+const viewPaths = {
+  all: "/overview",
+  movies: "/movies",
+  series: "/shows",
+  collections: "/collections",
+  settings: "/settings",
+};
+
+const pathViews = Object.fromEntries(
+  Object.entries(viewPaths).map(([view, path]) => [path, view]),
+);
 
 const sizeFormatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 1,
@@ -49,10 +69,27 @@ function formatBytes(bytes) {
 }
 
 function formatDate(isoDate) {
+  const date = new Date(isoDate);
+  const elapsedSeconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  const relativeFormatter = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
+
+  if (elapsedSeconds < 45) return "Just now";
+  if (elapsedSeconds < 3600) return relativeFormatter.format(-Math.round(elapsedSeconds / 60), "minute");
+  if (elapsedSeconds < 86400) return relativeFormatter.format(-Math.round(elapsedSeconds / 3600), "hour");
+  if (elapsedSeconds < 604800) return relativeFormatter.format(-Math.round(elapsedSeconds / 86400), "day");
+
   return new Intl.DateTimeFormat("en-US", {
     dateStyle: "short",
+  }).format(date);
+}
+
+function renderUpdatedAt() {
+  if (!lastUpdatedAt) return;
+  updatedAt.textContent = formatDate(lastUpdatedAt);
+  updatedAt.title = new Intl.DateTimeFormat("en-US", {
+    dateStyle: "medium",
     timeStyle: "medium",
-  }).format(new Date(isoDate));
+  }).format(new Date(lastUpdatedAt));
 }
 
 function renderErrors(errors) {
@@ -97,9 +134,14 @@ function normalizeSearchValue(value) {
     .toLocaleLowerCase("en-US");
 }
 
-function matchesSearch(values) {
+function matchesSearch(record, values) {
   if (!activeQuery) return true;
-  return values.some((value) => normalizeSearchValue(value).includes(activeQuery));
+  let searchText = searchTextCache.get(record);
+  if (!searchText) {
+    searchText = normalizeSearchValue(values.join("\n"));
+    searchTextCache.set(record, searchText);
+  }
+  return searchText.includes(activeQuery);
 }
 
 function sortItems(items) {
@@ -129,7 +171,7 @@ function getVisibleItems() {
   if (activeView === "movies") items = libraryItems.filter((item) => item.service === "radarr");
   if (activeView === "series") items = libraryItems.filter((item) => item.service === "sonarr");
   items = items.filter((item) =>
-    matchesSearch([
+    matchesSearch(item, [
       item.title,
       item.year,
       item.type,
@@ -144,7 +186,7 @@ function getVisibleItems() {
 function getVisibleCollections() {
   return sortCollections(
     collectionItems.filter((collection) =>
-      matchesSearch([
+      matchesSearch(collection, [
         collection.title,
         ...(collection.movies || []).flatMap((movie) => [movie.title, movie.year, movie.path]),
       ]),
@@ -152,9 +194,7 @@ function getVisibleCollections() {
   );
 }
 
-function renderRows() {
-  const items = getVisibleItems();
-
+function renderRows(items) {
   rows.replaceChildren(
     ...items.flatMap((item) => {
       const row = document.createElement("tr");
@@ -174,13 +214,16 @@ function renderRows() {
             <div class="poster" aria-hidden="true"></div>
             <div>
               <div class="title"></div>
-              <div class="collection muted"></div>
+              <div class="collection">
+                <span class="collection-name muted"></span>
+                <span class="collection-monitor-badge">Monitored collection</span>
+              </div>
             </div>
           </div>
         </td>
         <td><span class="badge"></span></td>
-        <td></td>
-        <td class="muted"></td>
+        <td><span class="source-badge"></span></td>
+        <td class="muted path-cell"></td>
         <td class="number"></td>
         <td class="actions"><button class="delete-button" type="button"></button></td>
       `;
@@ -196,23 +239,24 @@ function renderRows() {
       }
 
       if (item.collection) {
-        collection.textContent = item.collection;
+        collection.querySelector(".collection-name").textContent = item.collection;
+        collection
+          .querySelector(".collection-monitor-badge")
+          .toggleAttribute("hidden", !item.collectionMonitored);
       } else {
         collection.remove();
       }
 
       row.children[1].querySelector(".badge").textContent = item.type;
-      row.children[2].textContent = item.source;
+      const sourceBadge = row.children[2].querySelector(".source-badge");
+      sourceBadge.textContent = item.source;
+      sourceBadge.classList.add(`source-badge-${item.service}`);
       row.children[3].textContent = item.path || "-";
+      row.children[3].title = item.path || "";
       row.children[4].textContent = formatBytes(item.sizeOnDisk);
       const actions = row.children[5];
       const deleteButton = actions.querySelector(".delete-button");
       deleteButton.textContent = "Delete";
-
-      if (item.service === "radarr" && item.collection && item.collectionMonitored) {
-        deleteButton.classList.add("collection-safe-delete-button");
-        deleteButton.textContent = "Unmonitor collection and delete movie";
-      }
 
       if (activeView === "series" && item.service === "sonarr" && !item.monitored) {
         const monitorButton = document.createElement("button");
@@ -224,6 +268,7 @@ function renderRows() {
 
       if (activeView !== "series") return [row];
 
+      row.classList.add("has-season-details");
       const seasonsRow = document.createElement("tr");
       seasonsRow.className = "season-detail-row source-sonarr";
       seasonsRow.innerHTML = `
@@ -293,15 +338,15 @@ function renderPoster(element, item) {
   element.textContent = item.type?.slice(0, 1) || "C";
 }
 
-function renderCollections() {
-  const collections = getVisibleCollections();
-
+function renderCollections(collections) {
   collectionList.replaceChildren(
     ...collections.map((collection) => {
       const card = document.createElement("article");
       card.className = "collection-card";
       card.dataset.id = collection.id;
       card.dataset.title = collection.title;
+      card.dataset.existingMovieCount = collection.existingMovieCount;
+      card.dataset.sizeOnDisk = collection.sizeOnDisk;
 
       card.innerHTML = `
         <div class="collection-header">
@@ -382,11 +427,165 @@ function renderSettings() {
   });
 }
 
+function renderStorage() {
+  if (!storageState) return;
+
+  const disks = storageState.disks || [];
+  storageUpdatedAt.textContent = storageState.updatedAt
+    ? `Updated ${formatDate(storageState.updatedAt).toLowerCase()}`
+    : "";
+
+  storageList.replaceChildren(
+    ...disks.map((disk) => {
+      const totalSpace = Number(disk.totalSpace || 0);
+      const freeSpace = Math.max(0, Number(disk.freeSpace || 0));
+      const usedSpace = Math.max(0, totalSpace - freeSpace);
+      const usedPercent = totalSpace > 0 ? Math.min(100, (usedSpace / totalSpace) * 100) : 0;
+      const card = document.createElement("article");
+      card.className = `storage-card storage-${disk.service}`;
+      card.innerHTML = `
+        <div class="storage-card-heading">
+          <span class="storage-service"></span>
+          <strong class="storage-percent"></strong>
+        </div>
+        <div class="storage-name"></div>
+        <div class="storage-path"></div>
+        <div class="storage-meter" role="meter" aria-label="Disk usage" aria-valuemin="0" aria-valuemax="100">
+          <div class="storage-meter-fill"></div>
+        </div>
+        <div class="storage-usage">
+          <span><strong class="storage-used"></strong> used</span>
+          <span><strong class="storage-total"></strong> total</span>
+        </div>
+      `;
+
+      card.querySelector(".storage-service").textContent = disk.source;
+      card.querySelector(".storage-percent").textContent = `${Math.round(usedPercent)}% used`;
+      const paths = disk.paths || [];
+      card.querySelector(".storage-name").textContent =
+        paths.length > 1 ? `${paths.length} mapped paths` : paths[0] || "Disk";
+      const path = card.querySelector(".storage-path");
+      path.textContent = paths.join(" · ");
+      path.title = paths.join("\n");
+      card.querySelector(".storage-used").textContent = formatBytes(usedSpace);
+      card.querySelector(".storage-total").textContent = formatBytes(totalSpace);
+      const meter = card.querySelector(".storage-meter");
+      meter.setAttribute("aria-valuenow", String(Math.round(usedPercent)));
+      const fill = card.querySelector(".storage-meter-fill");
+      fill.style.width = `${usedPercent}%`;
+      fill.classList.toggle("is-high", usedPercent >= 80 && usedPercent < 90);
+      fill.classList.toggle("is-critical", usedPercent >= 90);
+      return card;
+    }),
+  );
+
+  const errors = storageState.errors || [];
+  storageStateElement.classList.toggle("is-error", errors.length > 0);
+  storageStateElement.textContent = errors.length
+    ? errors.map((error) => `${error.source}: ${error.message}`).join(" · ")
+    : "No disks available.";
+  storageStateElement.hidden = disks.length > 0 && errors.length === 0;
+  storageList.hidden = disks.length === 0;
+}
+
+async function loadStorage() {
+  storageStateElement.hidden = false;
+  storageStateElement.classList.remove("is-error");
+  storageStateElement.textContent = "Loading storage...";
+  storageList.hidden = true;
+  storageUpdatedAt.textContent = "";
+
+  try {
+    const response = await fetch("/api/storage", { cache: "no-store" });
+    const data = await readJsonResponse(response);
+    if (!response.ok && response.status !== 207) {
+      throw new Error(data.error || "Could not load storage");
+    }
+    storageState = data;
+  } catch (error) {
+    storageState = { disks: [], errors: [{ source: "Cleanerr", message: error.message }] };
+  }
+
+  renderStorage();
+}
+
 function selectView(view) {
   activeView = view;
   tabButtons.forEach((button) => {
     button.classList.toggle("is-active", button.dataset.view === view);
+    if (button.dataset.view === view) button.setAttribute("aria-current", "page");
+    else button.removeAttribute("aria-current");
   });
+}
+
+function viewFromLocation() {
+  const path = window.location.pathname.replace(/\/$/, "") || "/";
+  return pathViews[path] || "all";
+}
+
+function updateRoute(view, mode = "push") {
+  const method = mode === "replace" ? "replaceState" : "pushState";
+  window.history[method]({}, "", viewPaths[view]);
+}
+
+function clearSearch() {
+  if (searchRenderTimer) clearTimeout(searchRenderTimer);
+  searchRenderTimer = null;
+  searchInput.value = "";
+  activeQuery = "";
+}
+
+async function navigateToView(view, { historyMode = "push", resetSearch = true } = {}) {
+  if (resetSearch) clearSearch();
+  selectView(view);
+  if (historyMode) updateRoute(view, historyMode);
+  renderView();
+
+  if (activeView === "settings") {
+    await loadStorage();
+  } else if (libraryItems.length === 0) {
+    await loadLibrary();
+  }
+}
+
+const confirmationTimers = new WeakMap();
+let activeConfirmationButton = null;
+
+function resetDestructiveConfirmation(button) {
+  const timer = confirmationTimers.get(button);
+  if (timer) clearTimeout(timer);
+  confirmationTimers.delete(button);
+
+  if (button.dataset.defaultLabel) button.textContent = button.dataset.defaultLabel;
+  delete button.dataset.defaultLabel;
+  delete button.dataset.confirming;
+  button.classList.remove("is-confirming");
+  button.removeAttribute("aria-pressed");
+
+  if (activeConfirmationButton === button) {
+    activeConfirmationButton = null;
+    confirmationNotice.hidden = true;
+    confirmationMessage.textContent = "";
+  }
+}
+
+function confirmDestructiveAction(button, message) {
+  if (button.dataset.confirming === "true") {
+    resetDestructiveConfirmation(button);
+    return true;
+  }
+
+  if (activeConfirmationButton) resetDestructiveConfirmation(activeConfirmationButton);
+  button.dataset.defaultLabel = button.textContent;
+  button.dataset.confirming = "true";
+  button.classList.add("is-confirming");
+  button.setAttribute("aria-pressed", "true");
+  button.textContent = "Are you sure?";
+  activeConfirmationButton = button;
+  confirmationMessage.textContent = message;
+  confirmationNotice.hidden = false;
+  confirmationTimers.set(button, setTimeout(() => resetDestructiveConfirmation(button), 5000));
+  return false;
 }
 
 function renderView() {
@@ -395,8 +594,7 @@ function renderView() {
   const isCollectionsView = activeView === "collections";
   viewTitle.textContent = title;
   viewDescription.textContent = description;
-  refreshButton.hidden = isSettingsView;
-  summary.hidden = isSettingsView;
+  statusBar.hidden = isSettingsView;
   controls.hidden = isSettingsView;
   libraryPanel.hidden = isSettingsView;
   settingsPanel.hidden = !isSettingsView;
@@ -405,16 +603,13 @@ function renderView() {
 
   if (isSettingsView) {
     renderSettings();
+    renderStorage();
     return;
   }
 
   if (isCollectionsView) {
     const visibleCollections = getVisibleCollections();
-    renderCollections();
-    itemCount.textContent = visibleCollections.length;
-    totalSize.textContent = formatBytes(
-      visibleCollections.reduce((sum, collection) => sum + collection.sizeOnDisk, 0),
-    );
+    renderCollections(visibleCollections);
 
     const hasCollections = visibleCollections.length > 0;
     emptyState.textContent = activeQuery ? "No matching results." : "No content to show.";
@@ -424,11 +619,7 @@ function renderView() {
   }
 
   const visibleItems = getVisibleItems();
-  renderRows();
-  itemCount.textContent = visibleItems.length;
-  totalSize.textContent = formatBytes(
-    visibleItems.reduce((sum, item) => sum + item.sizeOnDisk, 0),
-  );
+  renderRows(visibleItems);
 
   const hasItems = visibleItems.length > 0;
   emptyState.textContent = activeQuery ? "No matching results." : "No content to show.";
@@ -437,20 +628,17 @@ function renderView() {
 }
 
 async function deleteItem(row) {
-  const title = row.dataset.title;
-  const type = row.dataset.type.toLowerCase();
   const isCollectionMovie =
     row.dataset.service === "radarr" &&
     Boolean(row.dataset.collection) &&
     row.dataset.collectionMonitored === "true";
-  const message = isCollectionMovie
-    ? `This movie belongs to "${row.dataset.collection}".\n\nCleanerr will stop monitoring that collection in Radarr and then delete "${title}" from Radarr and disk.\n\nThis action cannot be undone from Cleanerr.`
-    : `You are about to delete this ${type}: "${title}" from ${row.dataset.service} and disk.\n\nThis action cannot be undone from Cleanerr.`;
-  const confirmed = window.confirm(message);
-
-  if (!confirmed) return;
-
   const button = row.querySelector(".delete-button");
+  const source = row.dataset.service === "radarr" ? "Radarr" : "Sonarr";
+  const message = isCollectionMovie
+    ? `“${row.dataset.title}” will be deleted from Radarr and disk. The collection “${row.dataset.collection}” will also be unmonitored.`
+    : `“${row.dataset.title}” and its media files will be deleted from ${source} and disk.`;
+  if (!confirmDestructiveAction(button, message)) return;
+
   button.disabled = true;
   button.classList.add("is-busy");
   button.textContent = "Deleting...";
@@ -505,17 +693,10 @@ async function monitorSeries(row) {
 }
 
 async function removeSeason(seasonItem) {
-  const seriesTitle = seasonItem.dataset.seriesTitle;
-  const seasonName = seasonItem.dataset.seasonName;
-  const seasonSize = Number(seasonItem.dataset.seasonSize || 0);
-  const episodeFileCount = Number(seasonItem.dataset.episodeFileCount || 0);
-  const confirmation = window.prompt(
-    `This will unmonitor ${seasonName} of "${seriesTitle}" in Sonarr and delete ${episodeFileCount} episode file(s) from disk, freeing about ${formatBytes(seasonSize)}.\n\nThe series and other seasons will stay in Sonarr.\n\nType DELETE to continue.`,
-  );
-
-  if (confirmation !== "DELETE") return;
-
   const button = seasonItem.querySelector(".remove-season-button");
+  const message = `${seasonItem.dataset.seasonName} of “${seasonItem.dataset.seriesTitle}” will be unmonitored and ${seasonItem.dataset.episodeFileCount} episode file(s) (${formatBytes(Number(seasonItem.dataset.seasonSize || 0))}) will be deleted from disk.`;
+  if (!confirmDestructiveAction(button, message)) return;
+
   button.disabled = true;
   button.classList.add("is-busy");
   button.textContent = "Removing...";
@@ -607,14 +788,10 @@ async function setCollectionMonitoring(card) {
 }
 
 async function deleteCollection(card) {
-  const title = card.dataset.title;
-  const confirmation = window.prompt(
-    `This will delete "${title}" from Radarr and delete every existing movie in this collection from disk.\n\nType DELETE to continue.`,
-  );
-
-  if (confirmation !== "DELETE") return;
-
   const button = card.querySelector(".delete-collection-button");
+  const message = `“${card.dataset.title}” and ${card.dataset.existingMovieCount} existing movie(s) (${formatBytes(Number(card.dataset.sizeOnDisk || 0))}) will be deleted from Radarr and disk.`;
+  if (!confirmDestructiveAction(button, message)) return;
+
   button.disabled = true;
   button.classList.add("is-busy");
   button.textContent = "Deleting...";
@@ -706,6 +883,10 @@ async function saveServiceSettings(form) {
     settingsState.complete = data.complete;
     renderServiceSettings(form, data.service);
     showConnectionResult(form, "Settings saved", "success");
+    if (form.dataset.service === "radarr" || form.dataset.service === "sonarr") {
+      storageState = null;
+      loadStorage();
+    }
   } catch (error) {
     showConnectionResult(form, error.message, "error");
   } finally {
@@ -741,16 +922,17 @@ async function loadLibrary() {
 
     libraryItems = data.items || [];
     collectionItems = collectionsData.collections || [];
-    updatedAt.textContent = formatDate(data.updatedAt || collectionsData.updatedAt);
+    lastUpdatedAt = data.updatedAt || collectionsData.updatedAt;
+    renderUpdatedAt();
     renderErrors([...(data.errors || []), ...(collectionsData.errors || [])]);
     renderView();
   } catch (error) {
     libraryItems = [];
     collectionItems = [];
     renderErrors([{ source: "Cleanerr", message: error.message }]);
-    itemCount.textContent = "-";
-    totalSize.textContent = "-";
+    lastUpdatedAt = "";
     updatedAt.textContent = "-";
+    updatedAt.removeAttribute("title");
     emptyState.hidden = false;
   } finally {
     loadingState.hidden = true;
@@ -761,21 +943,17 @@ async function loadLibrary() {
 
 refreshButton.addEventListener("click", loadLibrary);
 brand.addEventListener("click", async (event) => {
+  if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
-  selectView("all");
   renderErrors([]);
-  renderView();
-  if (libraryItems.length === 0) await loadLibrary();
+  await navigateToView("all");
 });
 
 tabButtons.forEach((button) => {
-  button.addEventListener("click", async () => {
-    selectView(button.dataset.view);
-    renderView();
-
-    if (activeView !== "settings" && libraryItems.length === 0) {
-      await loadLibrary();
-    }
+  button.addEventListener("click", async (event) => {
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+    event.preventDefault();
+    await navigateToView(button.dataset.view);
   });
 });
 sortButtons.forEach((button) => {
@@ -788,14 +966,28 @@ sortButtons.forEach((button) => {
   });
 });
 searchInput.addEventListener("input", () => {
-  activeQuery = normalizeSearchValue(searchInput.value.trim());
-  renderView();
+  if (searchRenderTimer) clearTimeout(searchRenderTimer);
+  searchRenderTimer = setTimeout(() => {
+    activeQuery = normalizeSearchValue(searchInput.value.trim());
+    searchRenderTimer = null;
+    renderView();
+  }, 120);
 });
 searchInput.addEventListener("keydown", (event) => {
   if (event.key !== "Escape" || !searchInput.value) return;
-  searchInput.value = "";
-  activeQuery = "";
+  clearSearch();
   renderView();
+});
+window.addEventListener("popstate", () => {
+  navigateToView(viewFromLocation(), { historyMode: null });
+});
+document.addEventListener("click", (event) => {
+  if (event.target.closest(".is-confirming")) return;
+  if (activeConfirmationButton) resetDestructiveConfirmation(activeConfirmationButton);
+});
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  if (activeConfirmationButton) resetDestructiveConfirmation(activeConfirmationButton);
 });
 rows.addEventListener("click", (event) => {
   const monitorSeriesButton = event.target.closest(".monitor-series-button");
@@ -844,16 +1036,26 @@ serviceForms.forEach((form) => {
 });
 
 async function initialize() {
+  const initialView = viewFromLocation();
+  selectView(initialView);
+  if (window.location.pathname === "/" || window.location.pathname.endsWith("/")) {
+    updateRoute(initialView, "replace");
+  }
+
   try {
     const currentSettings = await loadSettings();
     if (!currentSettings.complete) {
-      selectView("settings");
+      await navigateToView("settings", { historyMode: "replace" });
+      return;
+    }
+    if (activeView === "settings") {
       renderView();
+      await loadStorage();
       return;
     }
     await loadLibrary();
   } catch (error) {
-    selectView("settings");
+    await navigateToView("settings", { historyMode: "replace" });
     renderErrors([{ source: "Cleanerr", message: error.message }]);
     renderView();
   } finally {
@@ -863,3 +1065,4 @@ async function initialize() {
 }
 
 initialize();
+setInterval(renderUpdatedAt, 30000);

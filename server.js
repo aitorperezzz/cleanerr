@@ -47,6 +47,8 @@ const contentTypes = {
   ".svg": "image/svg+xml",
 };
 
+const appRoutes = new Set(["/", "/overview", "/movies", "/shows", "/collections", "/settings"]);
+
 function jsonResponse(res, status, data) {
   const body = JSON.stringify(data);
   res.writeHead(status, {
@@ -443,7 +445,7 @@ async function getSonarrItems() {
     id: show.id,
     service: "sonarr",
     source: "Sonarr",
-    type: "Series",
+    type: "Show",
     title: show.title || "Untitled",
     year: show.year || null,
     monitored: Boolean(show.monitored),
@@ -609,6 +611,48 @@ async function handleApiCollections(req, res) {
   });
 }
 
+async function handleApiStorage(req, res) {
+  const results = await Promise.all(
+    ["radarr", "sonarr"].map(async (serviceName) => {
+      const service = services[serviceName];
+      try {
+        const disks = await fetchJson(service, "diskspace");
+        const groupedDisks = new Map();
+        for (const disk of disks || []) {
+          const freeSpace = bytesToNumber(disk.freeSpace);
+          const totalSpace = bytesToNumber(disk.totalSpace);
+          const key = `${totalSpace}:${freeSpace}`;
+          const group = groupedDisks.get(key) || {
+            service: serviceName,
+            source: service.label,
+            paths: [],
+            freeSpace,
+            totalSpace,
+          };
+          if (disk.path && !group.paths.includes(disk.path)) group.paths.push(disk.path);
+          groupedDisks.set(key, group);
+        }
+        return {
+          disks: [...groupedDisks.values()],
+          error: null,
+        };
+      } catch (error) {
+        return {
+          disks: [],
+          error: { source: service.label, message: error.message },
+        };
+      }
+    }),
+  );
+  const errors = results.flatMap((result) => (result.error ? [result.error] : []));
+
+  jsonResponse(res, errors.length ? 207 : 200, {
+    updatedAt: new Date().toISOString(),
+    disks: results.flatMap((result) => result.disks),
+    errors,
+  });
+}
+
 async function setCollectionMonitoring(collectionId, monitored) {
   const numericId = Number(collectionId);
   if (!Number.isInteger(numericId) || numericId <= 0) {
@@ -760,7 +804,7 @@ async function handleLibraryAction(req, res) {
 async function serveStatic(req, res) {
   const requestPath = new URL(req.url, `http://${req.headers.host}`).pathname;
   const safePath = normalize(decodeURIComponent(requestPath)).replace(/^(\.\.[/\\])+/, "");
-  const filePath = join(publicDir, safePath === "/" ? "index.html" : safePath);
+  const filePath = join(publicDir, appRoutes.has(safePath) ? "index.html" : safePath);
 
   if (!filePath.startsWith(publicDir)) {
     res.writeHead(403);
@@ -789,6 +833,11 @@ const server = createServer(async (req, res) => {
   try {
     if (req.url?.startsWith("/api/settings")) {
       await handleSettings(req, res);
+      return;
+    }
+
+    if ((req.method === "GET" || req.method === "HEAD") && req.url?.startsWith("/api/storage")) {
+      await handleApiStorage(req, res);
       return;
     }
 
