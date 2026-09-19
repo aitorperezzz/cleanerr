@@ -38,15 +38,17 @@
             <h1 id="viewTitle">Overview</h1>
             <p id="viewDescription">Your library sorted by disk usage.</p>
           </div>
+          <section id="statusBar" class="status-bar" aria-live="polite">
+            <div class="updated-status">
+              <span>Updated</span>
+              <strong id="updatedAt">-</strong>
+            </div>
+            <button id="refreshButton" type="button" aria-label="Refresh library">
+              <span class="refresh-label">Refresh</span>
+              <span class="refresh-icon" aria-hidden="true">↻</span>
+            </button>
+          </section>
         </header>
-
-        <section id="statusBar" class="status-bar" aria-live="polite">
-          <div class="updated-status">
-            <span>Updated</span>
-            <strong id="updatedAt">-</strong>
-          </div>
-          <button id="refreshButton" type="button" aria-label="Refresh library">Refresh</button>
-        </section>
 
         <section id="errorPanel" class="error-panel" hidden></section>
 
@@ -62,23 +64,10 @@
           </div>
         </section>
 
-        <section id="libraryPanel" class="table-shell">
+        <section id="libraryPanel" class="library-panel">
           <div id="loadingState" class="state">Loading...</div>
           <div id="emptyState" class="state" hidden>No content to show.</div>
-          <table id="libraryTable" hidden>
-            <thead>
-              <tr>
-                <th>Title</th>
-                <th>Type</th>
-                <th>Source</th>
-                <th>Path</th>
-                <th class="number">Size</th>
-                <th class="actions">Action</th>
-              </tr>
-            </thead>
-            <tbody id="libraryRows"></tbody>
-          </table>
-          <div id="collectionList" class="collection-list" hidden></div>
+          <div id="mediaGrid" class="media-grid" hidden></div>
         </section>
 
         <section id="settingsPanel" class="settings-panel" hidden>
@@ -146,6 +135,15 @@
         </section>
       </main>
     </div>
+
+    <div id="detailBackdrop" class="detail-backdrop" hidden></div>
+    <aside id="detailPanel" class="detail-panel" aria-labelledby="detailTitle" aria-modal="true" role="dialog" hidden>
+      <div class="detail-panel-header">
+        <span class="detail-panel-kicker">Details</span>
+        <button id="detailCloseButton" class="detail-close-button" type="button" aria-label="Close details">×</button>
+      </div>
+      <div id="detailContent" class="detail-content"></div>
+    </aside>
 
     <aside id="confirmationNotice" class="confirmation-notice" role="status" aria-live="polite" hidden>
       <strong>Confirm deletion</strong>

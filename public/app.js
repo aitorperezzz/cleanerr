@@ -9,9 +9,7 @@ import {
 const refreshButton = document.querySelector("#refreshButton");
 const loadingState = document.querySelector("#loadingState");
 const emptyState = document.querySelector("#emptyState");
-const table = document.querySelector("#libraryTable");
-const rows = document.querySelector("#libraryRows");
-const collectionList = document.querySelector("#collectionList");
+const mediaGrid = document.querySelector("#mediaGrid");
 const updatedAt = document.querySelector("#updatedAt");
 const errorPanel = document.querySelector("#errorPanel");
 const tabButtons = document.querySelectorAll(".tab-button");
@@ -30,6 +28,10 @@ const confirmationMessage = document.querySelector("#confirmationMessage");
 const storageStateElement = document.querySelector("#storageState");
 const storageList = document.querySelector("#storageList");
 const storageUpdatedAt = document.querySelector("#storageUpdatedAt");
+const detailBackdrop = document.querySelector("#detailBackdrop");
+const detailPanel = document.querySelector("#detailPanel");
+const detailContent = document.querySelector("#detailContent");
+const detailCloseButton = document.querySelector("#detailCloseButton");
 
 let libraryItems = [];
 let collectionItems = [];
@@ -41,13 +43,12 @@ let activeQuery = "";
 let lastUpdatedAt = "";
 let searchRenderTimer = null;
 let libraryRevision = 0;
-let renderedRowsKey = null;
-let renderedCollectionsKey = null;
+let renderedGridKey = null;
+let detailTrigger = null;
 
 const searchTextCache = new WeakMap();
 const viewRenderCache = new Map();
-const rowItems = new WeakMap();
-const collectionCards = new WeakMap();
+const mediaCards = new WeakMap();
 
 const viewCopy = {
   all: ["Overview", "Your library sorted by disk usage."],
@@ -159,112 +160,8 @@ function currentViewCacheKey() {
 
 function clearViewRenderCache() {
   viewRenderCache.clear();
-  renderedRowsKey = null;
-  renderedCollectionsKey = null;
-  rows.replaceChildren();
-  collectionList.replaceChildren();
-}
-
-function renderRows(items, cacheKey) {
-  if (cacheKey && renderedRowsKey === cacheKey) return;
-  const cached = cacheKey ? viewRenderCache.get(cacheKey) : null;
-  if (cached) {
-    rows.replaceChildren(...cached.nodes);
-    renderedRowsKey = cacheKey;
-    return;
-  }
-
-  rows.replaceChildren(
-    ...items.flatMap((item) => {
-      const row = document.createElement("tr");
-      let seasonsRow = null;
-      const title = item.year ? `${item.title} (${item.year})` : item.title;
-      row.classList.add(`source-${item.service}`);
-      row.dataset.service = item.service;
-      row.dataset.id = item.id;
-      row.dataset.title = title;
-      row.dataset.type = item.type;
-      row.dataset.monitored = item.monitored;
-      row.dataset.collection = item.collection || "";
-      row.dataset.collectionMonitored = item.collectionMonitored || false;
-
-      row.innerHTML = `
-        <td>
-          <div class="media-cell">
-            <div class="poster" aria-hidden="true"></div>
-            <div>
-              <div class="title"></div>
-              <div class="collection">
-                <span class="collection-name muted"></span>
-                <span class="collection-monitor-badge">Monitored collection</span>
-              </div>
-            </div>
-          </div>
-        </td>
-        <td><span class="badge"></span></td>
-        <td><span class="source-badge"></span></td>
-        <td class="muted path-cell"></td>
-        <td class="number"></td>
-        <td class="actions"><button class="delete-button" type="button"></button></td>
-      `;
-
-      row.children[0].querySelector(".title").textContent = title;
-      const poster = row.children[0].querySelector(".poster");
-      const collection = row.children[0].querySelector(".collection");
-      renderPoster(poster, item);
-
-      if (item.collection) {
-        collection.querySelector(".collection-name").textContent = item.collection;
-        collection
-          .querySelector(".collection-monitor-badge")
-          .toggleAttribute("hidden", !item.collectionMonitored);
-      } else {
-        collection.remove();
-      }
-
-      row.children[1].querySelector(".badge").textContent = item.type;
-      const sourceBadge = row.children[2].querySelector(".source-badge");
-      sourceBadge.textContent = item.source;
-      sourceBadge.classList.add(`source-badge-${item.service}`);
-      row.children[3].textContent = item.path || "-";
-      row.children[3].title = item.path || "";
-      row.children[4].textContent = formatBytes(item.sizeOnDisk);
-      const actions = row.children[5];
-      const deleteButton = actions.querySelector(".delete-button");
-      deleteButton.textContent = "Delete";
-
-      if (activeView === "series" && item.service === "sonarr" && !item.monitored) {
-        const monitorButton = document.createElement("button");
-        monitorButton.className = "monitor-series-button";
-        monitorButton.type = "button";
-        monitorButton.textContent = "Monitor";
-        actions.prepend(monitorButton);
-      }
-
-      if (activeView === "series") {
-        const seasonCount = item.seasons?.length || 0;
-        const detailsButton = document.createElement("button");
-        detailsButton.className = "details-toggle-button season-details-toggle";
-        detailsButton.type = "button";
-        detailsButton.disabled = seasonCount === 0;
-        detailsButton.setAttribute("aria-expanded", "false");
-        detailsButton.setAttribute("aria-controls", `seasons-${item.id}`);
-        detailsButton.innerHTML = `
-          <span class="details-toggle-label"></span>
-          <span class="details-toggle-icon" aria-hidden="true">⌄</span>
-        `;
-        detailsButton.querySelector(".details-toggle-label").textContent =
-          `${seasonCount} ${seasonCount === 1 ? "season" : "seasons"}`;
-        actions.prepend(detailsButton);
-        seasonsRow = createSeasonDetailsRow(item);
-        rowItems.set(row, { item, title, seasonsRow });
-      }
-
-      return seasonsRow ? [row, seasonsRow] : [row];
-    }),
-  );
-  renderedRowsKey = cacheKey;
-  if (cacheKey) viewRenderCache.set(cacheKey, { nodes: [...rows.children] });
+  renderedGridKey = null;
+  mediaGrid.replaceChildren();
 }
 
 function renderPoster(element, item) {
@@ -290,6 +187,79 @@ function renderPoster(element, item) {
   }
 
   element.textContent = item.type?.slice(0, 1) || "C";
+}
+
+function createMediaCard(item) {
+  const card = document.createElement("article");
+  const showType = activeView === "all";
+  card.className = `media-card source-${item.service}`;
+  card.innerHTML = `
+    <button class="media-card-button" type="button">
+      <span class="poster media-card-poster" aria-hidden="true"></span>
+      <span class="media-card-shade" aria-hidden="true"></span>
+      <span class="media-card-type"${showType ? "" : " hidden"}></span>
+      <strong class="media-card-size"></strong>
+    </button>
+    <div class="media-card-copy">
+      <h2 class="media-card-title"></h2>
+      <p class="media-card-meta"></p>
+    </div>
+  `;
+  const title = item.year ? `${item.title} (${item.year})` : item.title;
+  const seasonCount = item.seasons?.length || 0;
+  const meta = item.service === "sonarr"
+    ? `${item.year || "Unknown year"} · ${seasonCount} ${seasonCount === 1 ? "season" : "seasons"}`
+    : item.year || "Unknown year";
+  const button = card.querySelector(".media-card-button");
+  button.setAttribute("aria-label", `Open details for ${title}`);
+  renderPoster(card.querySelector(".media-card-poster"), item);
+  card.querySelector(".media-card-type").textContent = item.type;
+  card.querySelector(".media-card-size").textContent = formatBytes(item.sizeOnDisk);
+  card.querySelector(".media-card-title").textContent = item.title;
+  card.querySelector(".media-card-meta").textContent = meta;
+  mediaCards.set(card, { kind: "media", item });
+  return card;
+}
+
+function createCollectionCard(collection) {
+  const card = document.createElement("article");
+  card.className = "media-card source-radarr collection-grid-card";
+  card.innerHTML = `
+    <button class="media-card-button" type="button">
+      <span class="poster media-card-poster" aria-hidden="true"></span>
+      <span class="media-card-shade" aria-hidden="true"></span>
+      <span class="media-card-type">Collection</span>
+      <strong class="media-card-size"></strong>
+    </button>
+    <div class="media-card-copy">
+      <h2 class="media-card-title"></h2>
+      <p class="media-card-meta"></p>
+    </div>
+  `;
+  const button = card.querySelector(".media-card-button");
+  button.setAttribute("aria-label", `Open details for ${collection.title}`);
+  renderPoster(card.querySelector(".media-card-poster"), { ...collection, type: "Collection" });
+  card.querySelector(".media-card-size").textContent = formatBytes(collection.sizeOnDisk);
+  card.querySelector(".media-card-title").textContent = collection.title;
+  card.querySelector(".media-card-meta").textContent =
+    `${collection.existingMovieCount}/${collection.movieCount} movies`;
+  mediaCards.set(card, { kind: "collection", item: collection });
+  return card;
+}
+
+function renderGrid(items, cacheKey, kind = "media") {
+  if (cacheKey && renderedGridKey === cacheKey) return;
+  const cached = cacheKey ? viewRenderCache.get(cacheKey) : null;
+  if (cached) {
+    mediaGrid.replaceChildren(...cached.nodes);
+    renderedGridKey = cacheKey;
+    return;
+  }
+
+  const nodes = items.map(kind === "collection" ? createCollectionCard : createMediaCard);
+  mediaGrid.replaceChildren(...nodes);
+  renderedGridKey = cacheKey;
+  if (cacheKey) viewRenderCache.set(cacheKey, { nodes });
 }
 
 function createSeasonItem(season, series, title) {
@@ -333,39 +303,6 @@ function createSeasonItem(season, series, title) {
   return seasonItem;
 }
 
-function createSeasonDetailsRow(series) {
-  const seasonsRow = document.createElement("tr");
-  seasonsRow.className = "season-detail-row source-sonarr";
-  seasonsRow.id = `seasons-${series.id}`;
-  seasonsRow.hidden = true;
-  seasonsRow.innerHTML = `<td colspan="6"><div class="season-list"></div></td>`;
-  return seasonsRow;
-}
-
-function toggleSeasonDetails(row, button) {
-  const details = rowItems.get(row);
-  if (!details) return;
-  const willExpand = button.getAttribute("aria-expanded") !== "true";
-  const { seasonsRow } = details;
-  if (willExpand && seasonsRow.dataset.rendered !== "true") {
-    const seasons = [...(details.item.seasons || [])].sort(
-      (a, b) => a.seasonNumber - b.seasonNumber,
-    );
-    seasonsRow
-      .querySelector(".season-list")
-      .replaceChildren(
-        ...seasons.map((season) => createSeasonItem(season, details.item, details.title)),
-      );
-    seasonsRow.dataset.rendered = "true";
-  }
-  seasonsRow.hidden = !willExpand;
-  row.classList.toggle("has-season-details", willExpand);
-  button.setAttribute("aria-expanded", String(willExpand));
-  button.querySelector(".details-toggle-label").textContent = willExpand
-    ? "Hide seasons"
-    : `${details.item.seasons.length} ${details.item.seasons.length === 1 ? "season" : "seasons"}`;
-}
-
 function createCollectionMovie(movie) {
   const item = document.createElement("div");
   item.className = "collection-movie";
@@ -387,88 +324,173 @@ function createCollectionMovie(movie) {
   return item;
 }
 
-function toggleCollectionMovies(card, button) {
-  const collection = collectionCards.get(card);
-  if (!collection) return;
-  const movieList = card.querySelector(".collection-movies");
-  const willExpand = button.getAttribute("aria-expanded") !== "true";
-  if (willExpand && movieList.dataset.rendered !== "true") {
-    movieList.replaceChildren(...collection.movies.map(createCollectionMovie));
-    movieList.dataset.rendered = "true";
-  }
-  movieList.hidden = !willExpand;
-  card.classList.toggle("is-expanded", willExpand);
-  button.setAttribute("aria-expanded", String(willExpand));
-  button.querySelector(".details-toggle-label").textContent = willExpand
-    ? "Hide movies"
-    : `Show ${collection.movieCount} ${collection.movieCount === 1 ? "movie" : "movies"}`;
+function detailFact(label, value, className = "") {
+  const fact = document.createElement("div");
+  fact.className = `detail-fact ${className}`.trim();
+  const term = document.createElement("span");
+  const description = document.createElement("strong");
+  term.textContent = label;
+  description.textContent = value || "-";
+  fact.append(term, description);
+  return fact;
 }
 
-function renderCollections(collections, cacheKey) {
-  if (cacheKey && renderedCollectionsKey === cacheKey) return;
-  const cached = cacheKey ? viewRenderCache.get(cacheKey) : null;
-  if (cached) {
-    collectionList.replaceChildren(...cached.nodes);
-    renderedCollectionsKey = cacheKey;
-    return;
+function prepareDetailPanel(trigger) {
+  detailTrigger = trigger;
+  detailPanel.hidden = false;
+  detailBackdrop.hidden = false;
+  document.body.classList.add("detail-open");
+  requestAnimationFrame(() => detailPanel.classList.add("is-open"));
+  detailCloseButton.focus({ preventScroll: true });
+}
+
+function openMediaDetail(card, item) {
+  const title = item.year ? `${item.title} (${item.year})` : item.title;
+  detailPanel.dataset.service = item.service;
+  detailPanel.dataset.id = item.id;
+  detailPanel.dataset.title = title;
+  detailPanel.dataset.type = item.type;
+  detailPanel.dataset.monitored = item.monitored;
+  detailPanel.dataset.collection = item.collection || "";
+  detailPanel.dataset.collectionMonitored = item.collectionMonitored || false;
+  detailContent.innerHTML = `
+    <section class="detail-hero">
+      <div class="poster detail-poster" aria-hidden="true"></div>
+      <div class="detail-hero-copy">
+        <span class="detail-type-badge"></span>
+        <h2 id="detailTitle"></h2>
+        <p class="detail-source"></p>
+        <strong class="detail-size"></strong>
+      </div>
+    </section>
+    <section class="detail-facts" aria-label="Media details"></section>
+    <section class="detail-actions"></section>
+  `;
+  renderPoster(detailContent.querySelector(".detail-poster"), item);
+  detailContent.querySelector(".detail-type-badge").textContent = item.type;
+  detailContent.querySelector("#detailTitle").textContent = item.title;
+  detailContent.querySelector(".detail-source").textContent =
+    `${item.source}${item.year ? ` · ${item.year}` : ""}`;
+  detailContent.querySelector(".detail-size").textContent = formatBytes(item.sizeOnDisk);
+
+  const facts = detailContent.querySelector(".detail-facts");
+  facts.append(detailFact("Path", item.path, "detail-path"));
+  if (item.collection) {
+    facts.append(detailFact(
+      "Collection",
+      `${item.collection}${item.collectionMonitored ? " · Monitored" : ""}`,
+    ));
+  }
+  if (item.service === "sonarr") {
+    facts.append(detailFact("Monitoring", item.monitored ? "Monitored" : "Not monitored"));
   }
 
-  collectionList.replaceChildren(
-    ...collections.map((collection) => {
-      const card = document.createElement("article");
-      card.className = "collection-card";
-      card.dataset.id = collection.id;
-      card.dataset.title = collection.title;
-      card.dataset.existingMovieCount = collection.existingMovieCount;
-      card.dataset.sizeOnDisk = collection.sizeOnDisk;
+  const actions = detailContent.querySelector(".detail-actions");
+  if (item.service === "sonarr" && !item.monitored) {
+    const monitorButton = document.createElement("button");
+    monitorButton.className = "monitor-series-button";
+    monitorButton.type = "button";
+    monitorButton.textContent = "Monitor";
+    actions.append(monitorButton);
+  }
+  const deleteButton = document.createElement("button");
+  deleteButton.className = "delete-button";
+  deleteButton.type = "button";
+  deleteButton.textContent = "Delete";
+  actions.append(deleteButton);
 
-      card.innerHTML = `
-        <div class="collection-header">
-          <div class="poster collection-poster" aria-hidden="true"></div>
-          <div class="collection-main">
-            <div class="collection-title-row">
-              <div>
-                <h2 class="collection-title"></h2>
-                <div class="collection-meta muted"></div>
-              </div>
-              <strong class="collection-size"></strong>
-            </div>
-            <div class="collection-actions">
-              <button class="details-toggle-button collection-details-toggle" type="button" aria-expanded="false">
-                <span class="details-toggle-label"></span>
-                <span class="details-toggle-icon" aria-hidden="true">⌄</span>
-              </button>
-              <button class="toggle-collection-monitor-button" type="button"></button>
-              <button class="delete-collection-button" type="button"></button>
-            </div>
-          </div>
-        </div>
-        <div class="collection-movies" hidden></div>
-      `;
+  if (item.service === "sonarr") {
+    const section = document.createElement("section");
+    section.className = "detail-section";
+    const heading = document.createElement("div");
+    heading.className = "detail-section-heading";
+    const headingTitle = document.createElement("h3");
+    const count = item.seasons?.length || 0;
+    headingTitle.textContent = "Seasons";
+    const headingCount = document.createElement("span");
+    headingCount.textContent = `${count} total`;
+    heading.append(headingTitle, headingCount);
+    const seasonList = document.createElement("div");
+    seasonList.className = "season-list";
+    seasonList.replaceChildren(
+      ...(item.seasons || [])
+        .slice()
+        .sort((a, b) => a.seasonNumber - b.seasonNumber)
+        .map((season) => createSeasonItem(season, item, title)),
+    );
+    section.append(heading, seasonList);
+    detailContent.append(section);
+  }
+  prepareDetailPanel(card.querySelector(".media-card-button"));
+}
 
-      renderPoster(card.querySelector(".collection-poster"), collection);
-      card.querySelector(".collection-title").textContent = collection.title;
-      card.querySelector(".collection-meta").textContent =
-        `${collection.existingMovieCount}/${collection.movieCount} movies in library · ${collection.monitored ? "Monitored" : "Not monitored"}`;
-      card.querySelector(".collection-size").textContent = formatBytes(collection.sizeOnDisk);
-      const detailsButton = card.querySelector(".collection-details-toggle");
-      detailsButton.setAttribute("aria-controls", `collection-movies-${collection.id}`);
-      detailsButton.querySelector(".details-toggle-label").textContent =
-        `Show ${collection.movieCount} ${collection.movieCount === 1 ? "movie" : "movies"}`;
-      const monitorButton = card.querySelector(".toggle-collection-monitor-button");
-      monitorButton.dataset.monitored = collection.monitored;
-      monitorButton.textContent = collection.monitored ? "Unmonitor" : "Monitor";
-      card.querySelector(".delete-collection-button").textContent = "Delete collection";
-
-      const movieList = card.querySelector(".collection-movies");
-      movieList.id = `collection-movies-${collection.id}`;
-      collectionCards.set(card, collection);
-
-      return card;
-    }),
+function openCollectionDetail(card, collection) {
+  detailPanel.dataset.id = collection.id;
+  detailPanel.dataset.title = collection.title;
+  detailPanel.dataset.existingMovieCount = collection.existingMovieCount;
+  detailPanel.dataset.sizeOnDisk = collection.sizeOnDisk;
+  delete detailPanel.dataset.service;
+  delete detailPanel.dataset.collection;
+  detailContent.innerHTML = `
+    <section class="detail-hero">
+      <div class="poster detail-poster" aria-hidden="true"></div>
+      <div class="detail-hero-copy">
+        <span class="detail-type-badge">Collection</span>
+        <h2 id="detailTitle"></h2>
+        <p class="detail-source"></p>
+        <strong class="detail-size"></strong>
+      </div>
+    </section>
+    <section class="detail-facts" aria-label="Collection details"></section>
+    <section class="detail-actions">
+      <button class="toggle-collection-monitor-button" type="button"></button>
+      <button class="delete-collection-button" type="button">Delete collection</button>
+    </section>
+    <section class="detail-section">
+      <div class="detail-section-heading"><h3>Movies</h3><span class="detail-movie-count"></span></div>
+      <div class="collection-movies"></div>
+    </section>
+  `;
+  renderPoster(detailContent.querySelector(".detail-poster"), {
+    ...collection,
+    type: "Collection",
+  });
+  detailContent.querySelector("#detailTitle").textContent = collection.title;
+  detailContent.querySelector(".detail-source").textContent = "Radarr";
+  detailContent.querySelector(".detail-size").textContent = formatBytes(collection.sizeOnDisk);
+  detailContent.querySelector(".detail-facts").append(
+    detailFact("Library", `${collection.existingMovieCount}/${collection.movieCount} movies available`),
+    detailFact("Monitoring", collection.monitored ? "Monitored" : "Not monitored"),
   );
-  renderedCollectionsKey = cacheKey;
-  if (cacheKey) viewRenderCache.set(cacheKey, { nodes: [...collectionList.children] });
+  const monitorButton = detailContent.querySelector(".toggle-collection-monitor-button");
+  monitorButton.dataset.monitored = collection.monitored;
+  monitorButton.textContent = collection.monitored ? "Unmonitor" : "Monitor";
+  detailContent.querySelector(".detail-movie-count").textContent = `${collection.movieCount} total`;
+  detailContent
+    .querySelector(".collection-movies")
+    .replaceChildren(...collection.movies.map(createCollectionMovie));
+  prepareDetailPanel(card.querySelector(".media-card-button"));
+}
+
+function openCardDetail(card) {
+  const record = mediaCards.get(card);
+  if (!record) return;
+  if (record.kind === "collection") openCollectionDetail(card, record.item);
+  else openMediaDetail(card, record.item);
+}
+
+function closeDetail({ restoreFocus = true } = {}) {
+  if (detailPanel.hidden) return;
+  if (activeConfirmationButton && detailPanel.contains(activeConfirmationButton)) {
+    resetDestructiveConfirmation(activeConfirmationButton);
+  }
+  detailPanel.classList.remove("is-open");
+  detailPanel.hidden = true;
+  detailBackdrop.hidden = true;
+  document.body.classList.remove("detail-open");
+  detailContent.replaceChildren();
+  if (restoreFocus && detailTrigger?.isConnected) detailTrigger.focus({ preventScroll: true });
+  detailTrigger = null;
 }
 
 function renderServiceSettings(form, service) {
@@ -597,6 +619,7 @@ function clearSearch() {
 }
 
 async function navigateToView(view, { historyMode = "push", resetSearch = true } = {}) {
+  closeDetail({ restoreFocus: false });
   if (resetSearch) clearSearch();
   selectView(view);
   if (historyMode) updateRoute(view, historyMode);
@@ -659,8 +682,7 @@ function renderView() {
   controls.hidden = isSettingsView;
   libraryPanel.hidden = isSettingsView;
   settingsPanel.hidden = !isSettingsView;
-  table.hidden = true;
-  collectionList.hidden = true;
+  mediaGrid.hidden = true;
 
   if (isSettingsView) {
     renderSettings();
@@ -670,21 +692,21 @@ function renderView() {
 
   if (isCollectionsView) {
     const visibleCollections = getVisibleCollections();
-    renderCollections(visibleCollections, currentViewCacheKey());
+    renderGrid(visibleCollections, currentViewCacheKey(), "collection");
 
     const hasCollections = visibleCollections.length > 0;
     emptyState.textContent = activeQuery ? "No matching results." : "No content to show.";
-    collectionList.hidden = !hasCollections;
+    mediaGrid.hidden = !hasCollections;
     emptyState.hidden = hasCollections;
     return;
   }
 
   const visibleItems = getVisibleItems();
-  renderRows(visibleItems, currentViewCacheKey());
+  renderGrid(visibleItems, currentViewCacheKey());
 
   const hasItems = visibleItems.length > 0;
   emptyState.textContent = activeQuery ? "No matching results." : "No content to show.";
-  table.hidden = !hasItems;
+  mediaGrid.hidden = !hasItems;
   emptyState.hidden = hasItems;
 }
 
@@ -958,12 +980,12 @@ async function saveServiceSettings(form) {
 }
 
 async function loadLibrary() {
+  closeDetail({ restoreFocus: false });
   refreshButton.disabled = true;
   refreshButton.classList.add("is-busy");
   loadingState.hidden = false;
   emptyState.hidden = true;
-  table.hidden = true;
-  collectionList.hidden = true;
+  mediaGrid.hidden = true;
 
   try {
     const refresh = Date.now();
@@ -1054,18 +1076,20 @@ document.addEventListener("click", (event) => {
 });
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
-  if (activeConfirmationButton) resetDestructiveConfirmation(activeConfirmationButton);
-});
-rows.addEventListener("click", (event) => {
-  const seasonDetailsButton = event.target.closest(".season-details-toggle");
-  if (seasonDetailsButton) {
-    toggleSeasonDetails(seasonDetailsButton.closest("tr"), seasonDetailsButton);
+  if (activeConfirmationButton) {
+    resetDestructiveConfirmation(activeConfirmationButton);
     return;
   }
-
+  closeDetail();
+});
+mediaGrid.addEventListener("click", (event) => {
+  const button = event.target.closest(".media-card-button");
+  if (button) openCardDetail(button.closest(".media-card"));
+});
+detailContent.addEventListener("click", (event) => {
   const monitorSeriesButton = event.target.closest(".monitor-series-button");
   if (monitorSeriesButton) {
-    monitorSeries(monitorSeriesButton.closest("tr"));
+    monitorSeries(detailPanel);
     return;
   }
 
@@ -1081,28 +1105,25 @@ rows.addEventListener("click", (event) => {
     return;
   }
 
-  const button = event.target.closest(".delete-button");
-  if (!button) return;
-  deleteItem(button.closest("tr"));
-});
-collectionList.addEventListener("click", (event) => {
-  const detailsButton = event.target.closest(".collection-details-toggle");
-  if (detailsButton) {
-    toggleCollectionMovies(detailsButton.closest(".collection-card"), detailsButton);
+  const deleteButton = event.target.closest(".delete-button");
+  if (deleteButton) {
+    deleteItem(detailPanel);
     return;
   }
 
   const monitorButton = event.target.closest(".toggle-collection-monitor-button");
   if (monitorButton) {
-    setCollectionMonitoring(monitorButton.closest(".collection-card"));
+    setCollectionMonitoring(detailPanel);
     return;
   }
 
-  const deleteButton = event.target.closest(".delete-collection-button");
-  if (deleteButton) {
-    deleteCollection(deleteButton.closest(".collection-card"));
+  const deleteCollectionButton = event.target.closest(".delete-collection-button");
+  if (deleteCollectionButton) {
+    deleteCollection(detailPanel);
   }
 });
+detailCloseButton.addEventListener("click", () => closeDetail());
+detailBackdrop.addEventListener("click", () => closeDetail());
 
 serviceForms.forEach((form) => {
   form.addEventListener("submit", (event) => {
