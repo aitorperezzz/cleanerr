@@ -97,3 +97,21 @@ The server uses Node.js without a build step and serves the files in `public/`.
 After changing server-side code, restart `npm start`. Browser assets can be
 refreshed directly. The same Node.js major version is used for local development
 and the container image.
+
+Run the automated test suite with:
+
+```sh
+npm test
+```
+
+The tests use Node.js's built-in test runner and do not connect to real Radarr,
+Sonarr, or Jellyfin instances. Service calls are replaced with in-memory fakes,
+including destructive operations.
+
+The main modules are organized as follows:
+
+- `server.js` contains HTTP routing and service transport.
+- `library-actions.js` contains monitoring and deletion workflows.
+- `radarr-snapshot.js` coalesces concurrent Radarr library reads.
+- `settings-store.js` validates and persists runtime configuration.
+- `public/library-utils.js` contains reusable formatting, search, and sorting logic.

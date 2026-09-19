@@ -5,6 +5,8 @@ import { extname, join, normalize } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
+import { createLibraryActions } from "./library-actions.js";
+import { createRadarrSnapshot } from "./radarr-snapshot.js";
 import {
   loadSettings,
   normalizeServiceSettings,
@@ -21,35 +23,10 @@ const { host: HOST, port: PORT } = config;
 const serviceLabels = { radarr: "Radarr", sonarr: "Sonarr", jellyfin: "Jellyfin" };
 let settings = await loadSettings(config.settingsFile);
 let services = buildServices(settings);
-let radarrSnapshot = null;
-
-function invalidateRadarrSnapshot() {
-  radarrSnapshot = null;
-}
-
-function getRadarrSnapshot() {
-  const now = Date.now();
-  if (radarrSnapshot && (!radarrSnapshot.settled || radarrSnapshot.expiresAt > now)) {
-    return radarrSnapshot.promise;
-  }
-
-  const promise = Promise.all([
-    fetchJson(services.radarr, "movie"),
-    fetchJson(services.radarr, "collection"),
-  ]).then(([movies, collections]) => ({ movies, collections }));
-  const snapshot = { promise, settled: false, expiresAt: 0 };
-  radarrSnapshot = snapshot;
-  promise.then(
-    () => {
-      snapshot.settled = true;
-      snapshot.expiresAt = Date.now() + 250;
-    },
-    () => {
-      if (radarrSnapshot === snapshot) invalidateRadarrSnapshot();
-    },
-  );
-  return promise;
-}
+const radarrSnapshot = createRadarrSnapshot({
+  getService: () => services.radarr,
+  fetchJson,
+});
 
 function buildServices(currentSettings) {
   return Object.fromEntries(
@@ -146,7 +123,7 @@ async function sendJson(service, endpoint, method, body) {
     });
   } catch {
     const data = await curlJson(service, url, { method, body });
-    if (service === services.radarr) invalidateRadarrSnapshot();
+    if (service === services.radarr) radarrSnapshot.invalidate();
     return data;
   }
 
@@ -155,7 +132,7 @@ async function sendJson(service, endpoint, method, body) {
     throw new Error(`${service.label} responded ${response.status}${detail ? `: ${detail}` : ""}`);
   }
 
-  if (service === services.radarr) invalidateRadarrSnapshot();
+  if (service === services.radarr) radarrSnapshot.invalidate();
 
   if (response.status === 204) return null;
   return response.json().catch(() => null);
@@ -176,7 +153,7 @@ async function deleteEndpoint(service, url) {
     });
   } catch {
     await curlText(service, url, { method: "DELETE" });
-    if (service === services.radarr) invalidateRadarrSnapshot();
+    if (service === services.radarr) radarrSnapshot.invalidate();
     return;
   }
 
@@ -185,7 +162,7 @@ async function deleteEndpoint(service, url) {
     throw new Error(`${service.label} responded ${response.status}${detail ? `: ${detail}` : ""}`);
   }
 
-  if (service === services.radarr) invalidateRadarrSnapshot();
+  if (service === services.radarr) radarrSnapshot.invalidate();
 }
 
 async function curlJson(service, url, options = {}) {
@@ -230,6 +207,21 @@ async function curlText(service, url, { method = "GET", body } = {}) {
   return responseBody;
 }
 
+const {
+  deleteCollection,
+  deleteFromService,
+  removeSeason,
+  setCollectionMonitoring,
+  setSeasonMonitoring,
+  setSeriesMonitoring,
+  unmonitorCollectionAndDeleteMovie,
+} = createLibraryActions({
+  getService: (name) => services[name],
+  fetchJson,
+  sendJson,
+  deleteEndpoint,
+});
+
 async function proxyMedia(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
   const serviceName = url.searchParams.get("service");
@@ -272,133 +264,8 @@ async function proxyMedia(req, res) {
   res.end(image);
 }
 
-async function deleteFromService(serviceName, itemId) {
-  const service = services[serviceName];
-  const numericId = Number(itemId);
-
-  if (!service || !Number.isInteger(numericId) || numericId <= 0) {
-    const error = new Error("Invalid library item");
-    error.status = 400;
-    throw error;
-  }
-
-  const endpoint = serviceName === "radarr" ? "movie" : "series";
-  const exclusionParam = serviceName === "radarr" ? "addImportExclusion" : "addImportListExclusion";
-  const url = new URL(`${service.url}/api/v3/${endpoint}/${numericId}`);
-  url.searchParams.set("deleteFiles", "true");
-  url.searchParams.set(exclusionParam, "true");
-
-  await deleteEndpoint(service, url);
-
-  return { source: service.label, id: numericId };
-}
-
-async function deleteEpisodeFile(episodeFileId) {
-  const numericId = Number(episodeFileId);
-  if (!Number.isInteger(numericId) || numericId <= 0) {
-    const error = new Error("Invalid episode file");
-    error.status = 400;
-    throw error;
-  }
-
-  await deleteEndpoint(services.sonarr, `${services.sonarr.url}/api/v3/episodefile/${numericId}`);
-}
-
-async function removeSeason(seriesId, seasonNumber) {
-  const numericSeriesId = Number(seriesId);
-  const numericSeasonNumber = Number(seasonNumber);
-
-  if (
-    !Number.isInteger(numericSeriesId) ||
-    numericSeriesId <= 0 ||
-    !Number.isInteger(numericSeasonNumber) ||
-    numericSeasonNumber < 0
-  ) {
-    const error = new Error("Invalid season");
-    error.status = 400;
-    throw error;
-  }
-
-  const [series, episodes] = await Promise.all([
-    fetchJson(services.sonarr, `series/${numericSeriesId}`),
-    fetchJson(services.sonarr, `episode?seriesId=${numericSeriesId}&includeEpisodeFile=true`),
-  ]);
-  const season = series.seasons?.find((item) => item.seasonNumber === numericSeasonNumber);
-
-  if (!season) {
-    const error = new Error("Season not found");
-    error.status = 404;
-    throw error;
-  }
-
-  season.monitored = false;
-  await sendJson(services.sonarr, `series/${numericSeriesId}`, "PUT", series);
-
-  const episodeFiles = episodes
-    .filter((episode) => episode.seasonNumber === numericSeasonNumber && episode.episodeFileId > 0)
-    .map((episode) => ({
-      id: episode.episodeFileId,
-      size: bytesToNumber(episode.episodeFile?.size),
-    }));
-  const uniqueEpisodeFiles = [...new Map(episodeFiles.map((file) => [file.id, file])).values()];
-
-  for (const episodeFile of uniqueEpisodeFiles) {
-    await deleteEpisodeFile(episodeFile.id);
-  }
-
-  return {
-    source: "Sonarr",
-    seriesId: numericSeriesId,
-    seasonNumber: numericSeasonNumber,
-    deletedFiles: uniqueEpisodeFiles.length,
-    deletedSize: uniqueEpisodeFiles.reduce((sum, file) => sum + file.size, 0),
-  };
-}
-
-async function setSeriesMonitoring(seriesId, monitored) {
-  const numericSeriesId = Number(seriesId);
-  if (!Number.isInteger(numericSeriesId) || numericSeriesId <= 0) {
-    const error = new Error("Invalid series");
-    error.status = 400;
-    throw error;
-  }
-
-  const series = await fetchJson(services.sonarr, `series/${numericSeriesId}`);
-  series.monitored = monitored;
-  return sendJson(services.sonarr, `series/${numericSeriesId}`, "PUT", series);
-}
-
-async function setSeasonMonitoring(seriesId, seasonNumber, monitored) {
-  const numericSeriesId = Number(seriesId);
-  const numericSeasonNumber = Number(seasonNumber);
-
-  if (
-    !Number.isInteger(numericSeriesId) ||
-    numericSeriesId <= 0 ||
-    !Number.isInteger(numericSeasonNumber) ||
-    numericSeasonNumber < 0
-  ) {
-    const error = new Error("Invalid season");
-    error.status = 400;
-    throw error;
-  }
-
-  const series = await fetchJson(services.sonarr, `series/${numericSeriesId}`);
-  series.monitored = true;
-  const season = series.seasons?.find((item) => item.seasonNumber === numericSeasonNumber);
-
-  if (!season) {
-    const error = new Error("Season not found");
-    error.status = 404;
-    throw error;
-  }
-
-  season.monitored = monitored;
-  return sendJson(services.sonarr, `series/${numericSeriesId}`, "PUT", series);
-}
-
 async function getRadarrItems() {
-  const { movies, collections } = await getRadarrSnapshot();
+  const { movies, collections } = await radarrSnapshot.get();
   const collectionByMovieTmdbId = new Map();
 
   for (const collection of collections) {
@@ -432,7 +299,7 @@ async function getRadarrItems() {
 }
 
 async function getRadarrCollections() {
-  const { collections, movies } = await getRadarrSnapshot();
+  const { collections, movies } = await radarrSnapshot.get();
   const moviesByTmdbId = new Map(movies.map((movie) => [movie.tmdbId, movie]));
 
   return collections.map((collection) => {
@@ -619,7 +486,7 @@ async function handleSettings(req, res) {
     await saveSettings(config.settingsFile, nextSettings);
     settings = nextSettings;
     services = buildServices(settings);
-    invalidateRadarrSnapshot();
+    radarrSnapshot.invalidate();
     jsonResponse(res, 200, {
       service: publicSettings(settings).services[serviceName],
       complete: publicSettings(settings).complete,
@@ -682,80 +549,6 @@ async function handleApiStorage(req, res) {
     disks: results.flatMap((result) => result.disks),
     errors,
   });
-}
-
-async function setCollectionMonitoring(collectionId, monitored) {
-  const numericId = Number(collectionId);
-  if (!Number.isInteger(numericId) || numericId <= 0) {
-    const error = new Error("Invalid collection");
-    error.status = 400;
-    throw error;
-  }
-
-  const collection = await fetchJson(services.radarr, `collection/${numericId}`);
-  collection.monitored = monitored;
-  return sendJson(services.radarr, `collection/${numericId}`, "PUT", collection);
-}
-
-async function deleteCollection(collectionId) {
-  const numericId = Number(collectionId);
-  if (!Number.isInteger(numericId) || numericId <= 0) {
-    const error = new Error("Invalid collection");
-    error.status = 400;
-    throw error;
-  }
-
-  const [collection, movies] = await Promise.all([
-    fetchJson(services.radarr, `collection/${numericId}`),
-    fetchJson(services.radarr, "movie"),
-  ]);
-  const collectionTmdbIds = new Set(collection.movies.map((movie) => movie.tmdbId));
-  const moviesToDelete = movies.filter((movie) => collectionTmdbIds.has(movie.tmdbId));
-
-  collection.monitored = false;
-  await sendJson(services.radarr, `collection/${numericId}`, "PUT", collection);
-
-  for (const movie of moviesToDelete) {
-    await deleteFromService("radarr", movie.id);
-  }
-
-  return {
-    source: "Radarr",
-    id: numericId,
-    deletedMovies: moviesToDelete.length,
-  };
-}
-
-async function unmonitorCollectionAndDeleteMovie(movieId) {
-  const numericMovieId = Number(movieId);
-  if (!Number.isInteger(numericMovieId) || numericMovieId <= 0) {
-    const error = new Error("Invalid movie");
-    error.status = 400;
-    throw error;
-  }
-
-  const [movie, collections] = await Promise.all([
-    fetchJson(services.radarr, `movie/${numericMovieId}`),
-    fetchJson(services.radarr, "collection"),
-  ]);
-  const collection = collections.find((item) =>
-    (item.movies || []).some((collectionMovie) => collectionMovie.tmdbId === movie.tmdbId),
-  );
-
-  if (collection) {
-    collection.monitored = false;
-    await sendJson(services.radarr, `collection/${collection.id}`, "PUT", collection);
-  }
-
-  await deleteFromService("radarr", numericMovieId);
-
-  return {
-    source: "Radarr",
-    id: numericMovieId,
-    collectionId: collection?.id || null,
-    collectionTitle: collection?.title || movie.collection?.title || "",
-    unmonitoredCollection: Boolean(collection),
-  };
 }
 
 async function handleCollectionAction(req, res) {

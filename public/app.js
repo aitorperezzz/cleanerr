@@ -1,3 +1,11 @@
+import {
+  formatBytes,
+  formatDate,
+  normalizeSearchValue,
+  sortCollectionItems,
+  sortMediaItems,
+} from "./library-utils.js";
+
 const refreshButton = document.querySelector("#refreshButton");
 const loadingState = document.querySelector("#loadingState");
 const emptyState = document.querySelector("#emptyState");
@@ -61,34 +69,6 @@ const pathViews = Object.fromEntries(
   Object.entries(viewPaths).map(([view, path]) => [path, view]),
 );
 
-const sizeFormatter = new Intl.NumberFormat("en-US", {
-  maximumFractionDigits: 1,
-});
-
-function formatBytes(bytes) {
-  if (!bytes) return "0 B";
-
-  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
-  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-  const value = bytes / 1024 ** exponent;
-  return `${sizeFormatter.format(value)} ${units[exponent]}`;
-}
-
-function formatDate(isoDate) {
-  const date = new Date(isoDate);
-  const elapsedSeconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
-  const relativeFormatter = new Intl.RelativeTimeFormat("en-US", { numeric: "auto" });
-
-  if (elapsedSeconds < 45) return "Just now";
-  if (elapsedSeconds < 3600) return relativeFormatter.format(-Math.round(elapsedSeconds / 60), "minute");
-  if (elapsedSeconds < 86400) return relativeFormatter.format(-Math.round(elapsedSeconds / 3600), "hour");
-  if (elapsedSeconds < 604800) return relativeFormatter.format(-Math.round(elapsedSeconds / 86400), "day");
-
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "short",
-  }).format(date);
-}
-
 function renderUpdatedAt() {
   if (!lastUpdatedAt) return;
   updatedAt.textContent = formatDate(lastUpdatedAt);
@@ -126,20 +106,6 @@ async function readJsonResponse(response) {
   }
 }
 
-function normalizeTitle(title) {
-  return title
-    .toLocaleLowerCase("en-US")
-    .replace(/^(the|a|an)\s+/, "")
-    .trim();
-}
-
-function normalizeSearchValue(value) {
-  return String(value || "")
-    .normalize("NFD")
-    .replace(/\p{Diacritic}/gu, "")
-    .toLocaleLowerCase("en-US");
-}
-
 function matchesSearch(record, values) {
   if (!activeQuery) return true;
   let searchText = searchTextCache.get(record);
@@ -151,25 +117,11 @@ function matchesSearch(record, values) {
 }
 
 function sortItems(items) {
-  return [...items].sort((a, b) => {
-    if (activeSort === "name") {
-      const titleCompare = normalizeTitle(a.title).localeCompare(normalizeTitle(b.title), "en-US");
-      if (titleCompare) return titleCompare;
-      return (a.year || 0) - (b.year || 0);
-    }
-
-    return b.sizeOnDisk - a.sizeOnDisk || normalizeTitle(a.title).localeCompare(normalizeTitle(b.title), "en-US");
-  });
+  return sortMediaItems(items, activeSort);
 }
 
 function sortCollections(collections) {
-  return [...collections].sort((a, b) => {
-    if (activeSort === "name") {
-      return normalizeTitle(a.title).localeCompare(normalizeTitle(b.title), "en-US");
-    }
-
-    return b.sizeOnDisk - a.sizeOnDisk || normalizeTitle(a.title).localeCompare(normalizeTitle(b.title), "en-US");
-  });
+  return sortCollectionItems(collections, activeSort);
 }
 
 function getVisibleItems() {
