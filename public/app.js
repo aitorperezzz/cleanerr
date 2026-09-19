@@ -32,8 +32,14 @@ let activeSort = "size";
 let activeQuery = "";
 let lastUpdatedAt = "";
 let searchRenderTimer = null;
+let libraryRevision = 0;
+let renderedRowsKey = null;
+let renderedCollectionsKey = null;
 
 const searchTextCache = new WeakMap();
+const viewRenderCache = new Map();
+const rowItems = new WeakMap();
+const collectionCards = new WeakMap();
 
 const viewCopy = {
   all: ["Overview", "Your library sorted by disk usage."],
@@ -194,10 +200,32 @@ function getVisibleCollections() {
   );
 }
 
-function renderRows(items) {
+function currentViewCacheKey() {
+  if (activeQuery) return null;
+  return `${libraryRevision}:${activeView}:${activeSort}`;
+}
+
+function clearViewRenderCache() {
+  viewRenderCache.clear();
+  renderedRowsKey = null;
+  renderedCollectionsKey = null;
+  rows.replaceChildren();
+  collectionList.replaceChildren();
+}
+
+function renderRows(items, cacheKey) {
+  if (cacheKey && renderedRowsKey === cacheKey) return;
+  const cached = cacheKey ? viewRenderCache.get(cacheKey) : null;
+  if (cached) {
+    rows.replaceChildren(...cached.nodes);
+    renderedRowsKey = cacheKey;
+    return;
+  }
+
   rows.replaceChildren(
     ...items.flatMap((item) => {
       const row = document.createElement("tr");
+      let seasonsRow = null;
       const title = item.year ? `${item.title} (${item.year})` : item.title;
       row.classList.add(`source-${item.service}`);
       row.dataset.service = item.service;
@@ -231,12 +259,7 @@ function renderRows(items) {
       row.children[0].querySelector(".title").textContent = title;
       const poster = row.children[0].querySelector(".poster");
       const collection = row.children[0].querySelector(".collection");
-
-      if (item.posterUrl) {
-        poster.style.backgroundImage = `url("${item.posterUrl}")`;
-      } else {
-        poster.textContent = item.type.slice(0, 1);
-      }
+      renderPoster(poster, item);
 
       if (item.collection) {
         collection.querySelector(".collection-name").textContent = item.collection;
@@ -266,79 +289,178 @@ function renderRows(items) {
         actions.prepend(monitorButton);
       }
 
-      if (activeView !== "series") return [row];
+      if (activeView === "series") {
+        const seasonCount = item.seasons?.length || 0;
+        const detailsButton = document.createElement("button");
+        detailsButton.className = "details-toggle-button season-details-toggle";
+        detailsButton.type = "button";
+        detailsButton.disabled = seasonCount === 0;
+        detailsButton.setAttribute("aria-expanded", "false");
+        detailsButton.setAttribute("aria-controls", `seasons-${item.id}`);
+        detailsButton.innerHTML = `
+          <span class="details-toggle-label"></span>
+          <span class="details-toggle-icon" aria-hidden="true">⌄</span>
+        `;
+        detailsButton.querySelector(".details-toggle-label").textContent =
+          `${seasonCount} ${seasonCount === 1 ? "season" : "seasons"}`;
+        actions.prepend(detailsButton);
+        seasonsRow = createSeasonDetailsRow(item);
+        rowItems.set(row, { item, title, seasonsRow });
+      }
 
-      row.classList.add("has-season-details");
-      const seasonsRow = document.createElement("tr");
-      seasonsRow.className = "season-detail-row source-sonarr";
-      seasonsRow.innerHTML = `
-        <td colspan="6">
-          <div class="season-list"></div>
-        </td>
-      `;
-
-      const seasonList = seasonsRow.querySelector(".season-list");
-      const seasons = [...(item.seasons || [])].sort((a, b) => a.seasonNumber - b.seasonNumber);
-
-      seasonList.replaceChildren(
-        ...seasons.map((season) => {
-          const seasonItem = document.createElement("div");
-          seasonItem.className = "season-item";
-          const label = season.seasonNumber === 0 ? "Specials" : `Season ${season.seasonNumber}`;
-          const episodes = `${season.episodeFileCount}/${season.totalEpisodeCount} episodes`;
-          seasonItem.dataset.seriesId = item.id;
-          seasonItem.dataset.seriesTitle = title;
-          seasonItem.dataset.seasonNumber = season.seasonNumber;
-          seasonItem.dataset.seasonName = label;
-          seasonItem.dataset.seasonSize = season.sizeOnDisk;
-          seasonItem.dataset.episodeFileCount = season.episodeFileCount;
-          seasonItem.dataset.monitored = season.monitored;
-          seasonItem.classList.toggle(
-            "is-unmonitored-missing",
-            (!season.monitored || !item.monitored) && season.sizeOnDisk === 0,
-          );
-
-          seasonItem.innerHTML = `
-            <span class="season-name"></span>
-            <span class="season-episodes muted"></span>
-            <strong class="season-size"></strong>
-            <button class="season-action-button" type="button"></button>
-          `;
-          seasonItem.querySelector(".season-name").textContent = label;
-          seasonItem.querySelector(".season-episodes").textContent = episodes;
-          seasonItem.querySelector(".season-size").textContent = formatBytes(season.sizeOnDisk);
-          const actionButton = seasonItem.querySelector(".season-action-button");
-
-          if (season.sizeOnDisk > 0) {
-            actionButton.classList.add("remove-season-button");
-            actionButton.textContent = "Remove season";
-          } else if (!season.monitored || !item.monitored) {
-            actionButton.classList.add("monitor-season-button");
-            actionButton.textContent = "Monitor season";
-          } else {
-            actionButton.disabled = true;
-            actionButton.textContent = "No files";
-          }
-
-          return seasonItem;
-        }),
-      );
-
-      return [row, seasonsRow];
+      return seasonsRow ? [row, seasonsRow] : [row];
     }),
   );
+  renderedRowsKey = cacheKey;
+  if (cacheKey) viewRenderCache.set(cacheKey, { nodes: [...rows.children] });
 }
 
 function renderPoster(element, item) {
+  element.replaceChildren();
   if (item.posterUrl) {
-    element.style.backgroundImage = `url("${item.posterUrl}")`;
+    const image = document.createElement("img");
+    image.className = "poster-image";
+    image.alt = "";
+    image.loading = "lazy";
+    image.decoding = "async";
+    image.fetchPriority = "low";
+    image.src = item.posterUrl;
+    image.addEventListener(
+      "error",
+      () => {
+        image.remove();
+        element.textContent = item.type?.slice(0, 1) || "C";
+      },
+      { once: true },
+    );
+    element.append(image);
     return;
   }
 
   element.textContent = item.type?.slice(0, 1) || "C";
 }
 
-function renderCollections(collections) {
+function createSeasonItem(season, series, title) {
+  const seasonItem = document.createElement("div");
+  seasonItem.className = "season-item";
+  const label = season.seasonNumber === 0 ? "Specials" : `Season ${season.seasonNumber}`;
+  const episodes = `${season.episodeFileCount}/${season.totalEpisodeCount} episodes`;
+  seasonItem.dataset.seriesId = series.id;
+  seasonItem.dataset.seriesTitle = title;
+  seasonItem.dataset.seasonNumber = season.seasonNumber;
+  seasonItem.dataset.seasonName = label;
+  seasonItem.dataset.seasonSize = season.sizeOnDisk;
+  seasonItem.dataset.episodeFileCount = season.episodeFileCount;
+  seasonItem.dataset.monitored = season.monitored;
+  seasonItem.classList.toggle(
+    "is-unmonitored-missing",
+    (!season.monitored || !series.monitored) && season.sizeOnDisk === 0,
+  );
+  seasonItem.innerHTML = `
+    <span class="season-name"></span>
+    <span class="season-episodes muted"></span>
+    <strong class="season-size"></strong>
+    <button class="season-action-button" type="button"></button>
+  `;
+  seasonItem.querySelector(".season-name").textContent = label;
+  seasonItem.querySelector(".season-episodes").textContent = episodes;
+  seasonItem.querySelector(".season-size").textContent = formatBytes(season.sizeOnDisk);
+  const actionButton = seasonItem.querySelector(".season-action-button");
+
+  if (season.sizeOnDisk > 0) {
+    actionButton.classList.add("remove-season-button");
+    actionButton.textContent = "Remove season";
+  } else if (!season.monitored || !series.monitored) {
+    actionButton.classList.add("monitor-season-button");
+    actionButton.textContent = "Monitor season";
+  } else {
+    actionButton.disabled = true;
+    actionButton.textContent = "No files";
+  }
+
+  return seasonItem;
+}
+
+function createSeasonDetailsRow(series) {
+  const seasonsRow = document.createElement("tr");
+  seasonsRow.className = "season-detail-row source-sonarr";
+  seasonsRow.id = `seasons-${series.id}`;
+  seasonsRow.hidden = true;
+  seasonsRow.innerHTML = `<td colspan="6"><div class="season-list"></div></td>`;
+  return seasonsRow;
+}
+
+function toggleSeasonDetails(row, button) {
+  const details = rowItems.get(row);
+  if (!details) return;
+  const willExpand = button.getAttribute("aria-expanded") !== "true";
+  const { seasonsRow } = details;
+  if (willExpand && seasonsRow.dataset.rendered !== "true") {
+    const seasons = [...(details.item.seasons || [])].sort(
+      (a, b) => a.seasonNumber - b.seasonNumber,
+    );
+    seasonsRow
+      .querySelector(".season-list")
+      .replaceChildren(
+        ...seasons.map((season) => createSeasonItem(season, details.item, details.title)),
+      );
+    seasonsRow.dataset.rendered = "true";
+  }
+  seasonsRow.hidden = !willExpand;
+  row.classList.toggle("has-season-details", willExpand);
+  button.setAttribute("aria-expanded", String(willExpand));
+  button.querySelector(".details-toggle-label").textContent = willExpand
+    ? "Hide seasons"
+    : `${details.item.seasons.length} ${details.item.seasons.length === 1 ? "season" : "seasons"}`;
+}
+
+function createCollectionMovie(movie) {
+  const item = document.createElement("div");
+  item.className = "collection-movie";
+  const title = movie.year ? `${movie.title} (${movie.year})` : movie.title;
+  item.innerHTML = `
+    <div class="poster movie-poster" aria-hidden="true"></div>
+    <div class="collection-movie-title"></div>
+    <div class="collection-movie-state muted"></div>
+    <div class="collection-movie-size"></div>
+  `;
+  renderPoster(item.querySelector(".movie-poster"), { ...movie, type: "Movie" });
+  item.querySelector(".collection-movie-title").textContent = title;
+  item.querySelector(".collection-movie-state").textContent = movie.isExisting
+    ? "In library"
+    : "Not in library";
+  item.querySelector(".collection-movie-size").textContent = movie.isExisting
+    ? formatBytes(movie.sizeOnDisk)
+    : "-";
+  return item;
+}
+
+function toggleCollectionMovies(card, button) {
+  const collection = collectionCards.get(card);
+  if (!collection) return;
+  const movieList = card.querySelector(".collection-movies");
+  const willExpand = button.getAttribute("aria-expanded") !== "true";
+  if (willExpand && movieList.dataset.rendered !== "true") {
+    movieList.replaceChildren(...collection.movies.map(createCollectionMovie));
+    movieList.dataset.rendered = "true";
+  }
+  movieList.hidden = !willExpand;
+  card.classList.toggle("is-expanded", willExpand);
+  button.setAttribute("aria-expanded", String(willExpand));
+  button.querySelector(".details-toggle-label").textContent = willExpand
+    ? "Hide movies"
+    : `Show ${collection.movieCount} ${collection.movieCount === 1 ? "movie" : "movies"}`;
+}
+
+function renderCollections(collections, cacheKey) {
+  if (cacheKey && renderedCollectionsKey === cacheKey) return;
+  const cached = cacheKey ? viewRenderCache.get(cacheKey) : null;
+  if (cached) {
+    collectionList.replaceChildren(...cached.nodes);
+    renderedCollectionsKey = cacheKey;
+    return;
+  }
+
   collectionList.replaceChildren(
     ...collections.map((collection) => {
       const card = document.createElement("article");
@@ -360,12 +482,16 @@ function renderCollections(collections) {
               <strong class="collection-size"></strong>
             </div>
             <div class="collection-actions">
+              <button class="details-toggle-button collection-details-toggle" type="button" aria-expanded="false">
+                <span class="details-toggle-label"></span>
+                <span class="details-toggle-icon" aria-hidden="true">⌄</span>
+              </button>
               <button class="toggle-collection-monitor-button" type="button"></button>
               <button class="delete-collection-button" type="button"></button>
             </div>
           </div>
         </div>
-        <div class="collection-movies"></div>
+        <div class="collection-movies" hidden></div>
       `;
 
       renderPoster(card.querySelector(".collection-poster"), collection);
@@ -373,41 +499,24 @@ function renderCollections(collections) {
       card.querySelector(".collection-meta").textContent =
         `${collection.existingMovieCount}/${collection.movieCount} movies in library · ${collection.monitored ? "Monitored" : "Not monitored"}`;
       card.querySelector(".collection-size").textContent = formatBytes(collection.sizeOnDisk);
+      const detailsButton = card.querySelector(".collection-details-toggle");
+      detailsButton.setAttribute("aria-controls", `collection-movies-${collection.id}`);
+      detailsButton.querySelector(".details-toggle-label").textContent =
+        `Show ${collection.movieCount} ${collection.movieCount === 1 ? "movie" : "movies"}`;
       const monitorButton = card.querySelector(".toggle-collection-monitor-button");
       monitorButton.dataset.monitored = collection.monitored;
       monitorButton.textContent = collection.monitored ? "Unmonitor" : "Monitor";
       card.querySelector(".delete-collection-button").textContent = "Delete collection";
 
       const movieList = card.querySelector(".collection-movies");
-      movieList.replaceChildren(
-        ...collection.movies.map((movie) => {
-          const item = document.createElement("div");
-          item.className = "collection-movie";
-          const title = movie.year ? `${movie.title} (${movie.year})` : movie.title;
-
-          item.innerHTML = `
-            <div class="poster movie-poster" aria-hidden="true"></div>
-            <div class="collection-movie-title"></div>
-            <div class="collection-movie-state muted"></div>
-            <div class="collection-movie-size"></div>
-          `;
-
-          renderPoster(item.querySelector(".movie-poster"), { ...movie, type: "Movie" });
-          item.querySelector(".collection-movie-title").textContent = title;
-          item.querySelector(".collection-movie-state").textContent = movie.isExisting
-            ? "In library"
-            : "Not in library";
-          item.querySelector(".collection-movie-size").textContent = movie.isExisting
-            ? formatBytes(movie.sizeOnDisk)
-            : "-";
-
-          return item;
-        }),
-      );
+      movieList.id = `collection-movies-${collection.id}`;
+      collectionCards.set(card, collection);
 
       return card;
     }),
   );
+  renderedCollectionsKey = cacheKey;
+  if (cacheKey) viewRenderCache.set(cacheKey, { nodes: [...collectionList.children] });
 }
 
 function renderServiceSettings(form, service) {
@@ -609,7 +718,7 @@ function renderView() {
 
   if (isCollectionsView) {
     const visibleCollections = getVisibleCollections();
-    renderCollections(visibleCollections);
+    renderCollections(visibleCollections, currentViewCacheKey());
 
     const hasCollections = visibleCollections.length > 0;
     emptyState.textContent = activeQuery ? "No matching results." : "No content to show.";
@@ -619,7 +728,7 @@ function renderView() {
   }
 
   const visibleItems = getVisibleItems();
-  renderRows(visibleItems);
+  renderRows(visibleItems, currentViewCacheKey());
 
   const hasItems = visibleItems.length > 0;
   emptyState.textContent = activeQuery ? "No matching results." : "No content to show.";
@@ -922,6 +1031,8 @@ async function loadLibrary() {
 
     libraryItems = data.items || [];
     collectionItems = collectionsData.collections || [];
+    libraryRevision += 1;
+    clearViewRenderCache();
     lastUpdatedAt = data.updatedAt || collectionsData.updatedAt;
     renderUpdatedAt();
     renderErrors([...(data.errors || []), ...(collectionsData.errors || [])]);
@@ -929,6 +1040,8 @@ async function loadLibrary() {
   } catch (error) {
     libraryItems = [];
     collectionItems = [];
+    libraryRevision += 1;
+    clearViewRenderCache();
     renderErrors([{ source: "Cleanerr", message: error.message }]);
     lastUpdatedAt = "";
     updatedAt.textContent = "-";
@@ -958,7 +1071,9 @@ tabButtons.forEach((button) => {
 });
 sortButtons.forEach((button) => {
   button.addEventListener("click", () => {
+    if (activeSort === button.dataset.sort) return;
     activeSort = button.dataset.sort;
+    clearViewRenderCache();
     sortButtons.forEach((sortButton) => {
       sortButton.classList.toggle("is-active", sortButton === button);
     });
@@ -990,6 +1105,12 @@ document.addEventListener("keydown", (event) => {
   if (activeConfirmationButton) resetDestructiveConfirmation(activeConfirmationButton);
 });
 rows.addEventListener("click", (event) => {
+  const seasonDetailsButton = event.target.closest(".season-details-toggle");
+  if (seasonDetailsButton) {
+    toggleSeasonDetails(seasonDetailsButton.closest("tr"), seasonDetailsButton);
+    return;
+  }
+
   const monitorSeriesButton = event.target.closest(".monitor-series-button");
   if (monitorSeriesButton) {
     monitorSeries(monitorSeriesButton.closest("tr"));
@@ -1013,6 +1134,12 @@ rows.addEventListener("click", (event) => {
   deleteItem(button.closest("tr"));
 });
 collectionList.addEventListener("click", (event) => {
+  const detailsButton = event.target.closest(".collection-details-toggle");
+  if (detailsButton) {
+    toggleCollectionMovies(detailsButton.closest(".collection-card"), detailsButton);
+    return;
+  }
+
   const monitorButton = event.target.closest(".toggle-collection-monitor-button");
   if (monitorButton) {
     setCollectionMonitoring(monitorButton.closest(".collection-card"));

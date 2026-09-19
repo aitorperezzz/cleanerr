@@ -21,6 +21,35 @@ const { host: HOST, port: PORT } = config;
 const serviceLabels = { radarr: "Radarr", sonarr: "Sonarr", jellyfin: "Jellyfin" };
 let settings = await loadSettings(config.settingsFile);
 let services = buildServices(settings);
+let radarrSnapshot = null;
+
+function invalidateRadarrSnapshot() {
+  radarrSnapshot = null;
+}
+
+function getRadarrSnapshot() {
+  const now = Date.now();
+  if (radarrSnapshot && (!radarrSnapshot.settled || radarrSnapshot.expiresAt > now)) {
+    return radarrSnapshot.promise;
+  }
+
+  const promise = Promise.all([
+    fetchJson(services.radarr, "movie"),
+    fetchJson(services.radarr, "collection"),
+  ]).then(([movies, collections]) => ({ movies, collections }));
+  const snapshot = { promise, settled: false, expiresAt: 0 };
+  radarrSnapshot = snapshot;
+  promise.then(
+    () => {
+      snapshot.settled = true;
+      snapshot.expiresAt = Date.now() + 250;
+    },
+    () => {
+      if (radarrSnapshot === snapshot) invalidateRadarrSnapshot();
+    },
+  );
+  return promise;
+}
 
 function buildServices(currentSettings) {
   return Object.fromEntries(
@@ -116,13 +145,17 @@ async function sendJson(service, endpoint, method, body) {
       signal: AbortSignal.timeout(20000),
     });
   } catch {
-    return curlJson(service, url, { method, body });
+    const data = await curlJson(service, url, { method, body });
+    if (service === services.radarr) invalidateRadarrSnapshot();
+    return data;
   }
 
   if (!response.ok) {
     const detail = await response.text().catch(() => "");
     throw new Error(`${service.label} responded ${response.status}${detail ? `: ${detail}` : ""}`);
   }
+
+  if (service === services.radarr) invalidateRadarrSnapshot();
 
   if (response.status === 204) return null;
   return response.json().catch(() => null);
@@ -143,6 +176,7 @@ async function deleteEndpoint(service, url) {
     });
   } catch {
     await curlText(service, url, { method: "DELETE" });
+    if (service === services.radarr) invalidateRadarrSnapshot();
     return;
   }
 
@@ -150,6 +184,8 @@ async function deleteEndpoint(service, url) {
     const detail = await response.text().catch(() => "");
     throw new Error(`${service.label} responded ${response.status}${detail ? `: ${detail}` : ""}`);
   }
+
+  if (service === services.radarr) invalidateRadarrSnapshot();
 }
 
 async function curlJson(service, url, options = {}) {
@@ -227,7 +263,7 @@ async function proxyMedia(req, res) {
   const image = Buffer.from(await response.arrayBuffer());
   res.writeHead(200, {
     "content-type": response.headers.get("content-type") || "image/jpeg",
-    "cache-control": "no-store",
+    "cache-control": "private, max-age=86400, stale-while-revalidate=604800",
   });
   if (req.method === "HEAD") {
     res.end();
@@ -362,10 +398,7 @@ async function setSeasonMonitoring(seriesId, seasonNumber, monitored) {
 }
 
 async function getRadarrItems() {
-  const [movies, collections] = await Promise.all([
-    fetchJson(services.radarr, "movie"),
-    fetchJson(services.radarr, "collection"),
-  ]);
+  const { movies, collections } = await getRadarrSnapshot();
   const collectionByMovieTmdbId = new Map();
 
   for (const collection of collections) {
@@ -399,10 +432,7 @@ async function getRadarrItems() {
 }
 
 async function getRadarrCollections() {
-  const [collections, movies] = await Promise.all([
-    fetchJson(services.radarr, "collection"),
-    fetchJson(services.radarr, "movie"),
-  ]);
+  const { collections, movies } = await getRadarrSnapshot();
   const moviesByTmdbId = new Map(movies.map((movie) => [movie.tmdbId, movie]));
 
   return collections.map((collection) => {
@@ -589,6 +619,7 @@ async function handleSettings(req, res) {
     await saveSettings(config.settingsFile, nextSettings);
     settings = nextSettings;
     services = buildServices(settings);
+    invalidateRadarrSnapshot();
     jsonResponse(res, 200, {
       service: publicSettings(settings).services[serviceName],
       complete: publicSettings(settings).complete,

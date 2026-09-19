@@ -388,6 +388,25 @@ tbody tr.season-detail-row:hover td {
   font-size: 0.85rem;
 }
 
+.details-toggle-button {
+  min-height: 32px;
+  border-color: #c7c2b7;
+  padding: 0 10px;
+  background: #ffffff;
+  color: #202225;
+  font-size: 0.85rem;
+}
+
+.details-toggle-icon {
+  display: inline-block;
+  margin-left: 4px;
+  transition: transform 140ms ease;
+}
+
+.details-toggle-button[aria-expanded="true"] .details-toggle-icon {
+  transform: rotate(180deg);
+}
+
 .remove-season-button {
   min-height: 32px;
   border-color: #b3261e;
@@ -415,6 +434,7 @@ tbody tr.season-detail-row:hover td {
 }
 
 .poster {
+  overflow: hidden;
   width: 48px;
   aspect-ratio: 2 / 3;
   border: 1px solid rgb(0 0 0 / 12%);
@@ -424,6 +444,14 @@ tbody tr.season-detail-row:hover td {
   display: grid;
   place-items: center;
   font-weight: 800;
+}
+
+.poster-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+  object-fit: cover;
 }
 
 .collection {
@@ -491,6 +519,12 @@ tbody tr.season-detail-row:hover td {
   white-space: nowrap;
 }
 
+@media (min-width: 721px) {
+  #libraryRows td.actions button + button {
+    margin-left: 8px;
+  }
+}
+
 .delete-button {
   min-height: 34px;
   border-color: #b3261e;
@@ -548,6 +582,8 @@ tbody tr.season-detail-row:hover td {
 }
 
 .collection-card {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 160px;
   border: 1px solid #dedbd1;
   border-left: 4px solid #d7a514;
   border-radius: 8px;
@@ -1098,6 +1134,8 @@ tbody tr.season-detail-row:hover td {
   }
 
   tbody tr:not(.season-detail-row) {
+    content-visibility: auto;
+    contain-intrinsic-size: auto 117px;
     display: grid;
     overflow: hidden;
     border: 1px solid #dedbd1;
