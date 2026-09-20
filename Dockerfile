@@ -9,7 +9,7 @@ RUN apk add --no-cache curl \
 COPY package*.json ./
 RUN npm ci --omit=dev
 
-COPY config.js config.json settings-store.js server.js ./
+COPY *.js config.json ./
 COPY public ./public
 
 ENV NODE_ENV=production
