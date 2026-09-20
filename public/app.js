@@ -202,21 +202,15 @@ function createMediaCard(item) {
     </button>
     <div class="media-card-copy">
       <h2 class="media-card-title"></h2>
-      <p class="media-card-meta"></p>
     </div>
   `;
   const title = item.year ? `${item.title} (${item.year})` : item.title;
-  const seasonCount = item.seasons?.length || 0;
-  const meta = item.service === "sonarr"
-    ? `${item.year || "Unknown year"} · ${seasonCount} ${seasonCount === 1 ? "season" : "seasons"}`
-    : item.year || "Unknown year";
   const button = card.querySelector(".media-card-button");
   button.setAttribute("aria-label", `Open details for ${title}`);
   renderPoster(card.querySelector(".media-card-poster"), item);
   card.querySelector(".media-card-type").textContent = item.type;
   card.querySelector(".media-card-size").textContent = formatBytes(item.sizeOnDisk);
   card.querySelector(".media-card-title").textContent = item.title;
-  card.querySelector(".media-card-meta").textContent = meta;
   mediaCards.set(card, { kind: "media", item });
   return card;
 }
@@ -229,11 +223,11 @@ function createCollectionCard(collection) {
       <span class="poster media-card-poster" aria-hidden="true"></span>
       <span class="media-card-shade" aria-hidden="true"></span>
       <span class="media-card-type">Collection</span>
+      <span class="collection-monitor-indicator" role="img" aria-label="Monitored" title="Monitored"${collection.monitored ? "" : " hidden"}></span>
       <strong class="media-card-size"></strong>
     </button>
     <div class="media-card-copy">
       <h2 class="media-card-title"></h2>
-      <p class="media-card-meta"></p>
     </div>
   `;
   const button = card.querySelector(".media-card-button");
@@ -241,8 +235,6 @@ function createCollectionCard(collection) {
   renderPoster(card.querySelector(".media-card-poster"), { ...collection, type: "Collection" });
   card.querySelector(".media-card-size").textContent = formatBytes(collection.sizeOnDisk);
   card.querySelector(".media-card-title").textContent = collection.title;
-  card.querySelector(".media-card-meta").textContent =
-    `${collection.existingMovieCount}/${collection.movieCount} movies`;
   mediaCards.set(card, { kind: "collection", item: collection });
   return card;
 }
@@ -367,7 +359,9 @@ function openMediaDetail(card, item) {
     <section class="detail-actions"></section>
   `;
   renderPoster(detailContent.querySelector(".detail-poster"), item);
-  detailContent.querySelector(".detail-type-badge").textContent = item.type;
+  const typeBadge = detailContent.querySelector(".detail-type-badge");
+  typeBadge.textContent = item.type;
+  typeBadge.classList.add(`detail-type-${item.service}`);
   detailContent.querySelector("#detailTitle").textContent = item.title;
   detailContent.querySelector(".detail-source").textContent =
     `${item.source}${item.year ? ` · ${item.year}` : ""}`;
@@ -533,6 +527,10 @@ function renderStorage() {
         </div>
         <div class="storage-name"></div>
         <div class="storage-path"></div>
+        <div class="storage-available">
+          <strong></strong>
+          <span>available</span>
+        </div>
         <div class="storage-meter" role="meter" aria-label="Disk usage" aria-valuemin="0" aria-valuemax="100">
           <div class="storage-meter-fill"></div>
         </div>
@@ -550,10 +548,15 @@ function renderStorage() {
       const path = card.querySelector(".storage-path");
       path.textContent = paths.join(" · ");
       path.title = paths.join("\n");
+      card.querySelector(".storage-available strong").textContent = formatBytes(freeSpace);
       card.querySelector(".storage-used").textContent = formatBytes(usedSpace);
       card.querySelector(".storage-total").textContent = formatBytes(totalSpace);
       const meter = card.querySelector(".storage-meter");
       meter.setAttribute("aria-valuenow", String(Math.round(usedPercent)));
+      meter.setAttribute(
+        "aria-valuetext",
+        `${formatBytes(usedSpace)} used, ${formatBytes(freeSpace)} available`,
+      );
       const fill = card.querySelector(".storage-meter-fill");
       fill.style.width = `${usedPercent}%`;
       fill.classList.toggle("is-high", usedPercent >= 80 && usedPercent < 90);
@@ -624,6 +627,7 @@ async function navigateToView(view, { historyMode = "push", resetSearch = true }
   selectView(view);
   if (historyMode) updateRoute(view, historyMode);
   renderView();
+  window.scrollTo(0, 0);
 
   if (activeView === "settings") {
     await loadStorage();
