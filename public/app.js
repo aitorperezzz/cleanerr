@@ -286,7 +286,7 @@ function createSeasonItem(season, series, title) {
     actionButton.textContent = "Remove season";
   } else if (!season.monitored || !series.monitored) {
     actionButton.classList.add("monitor-season-button");
-    actionButton.textContent = "Monitor season";
+    actionButton.textContent = "Monitor & search";
   } else {
     actionButton.disabled = true;
     actionButton.textContent = "No files";
@@ -812,14 +812,14 @@ async function monitorSeason(seasonItem) {
   const seriesTitle = seasonItem.dataset.seriesTitle;
   const seasonName = seasonItem.dataset.seasonName;
   const confirmed = window.confirm(
-    `Monitor "${seriesTitle}" in Sonarr and monitor ${seasonName}?`,
+    `Monitor "${seriesTitle}" and search ${seasonName} in Sonarr now?`,
   );
   if (!confirmed) return;
 
   const button = seasonItem.querySelector(".monitor-season-button");
   button.disabled = true;
   button.classList.add("is-busy");
-  button.textContent = "Updating...";
+  button.textContent = "Starting search...";
 
   try {
     const response = await fetch(
@@ -829,7 +829,7 @@ async function monitorSeason(seasonItem) {
     const data = await readJsonResponse(response);
 
     if (!response.ok) {
-      throw new Error(data.error || "Could not monitor the season");
+      throw new Error(data.error || "Could not monitor and search the season");
     }
 
     await loadLibrary();
@@ -837,7 +837,7 @@ async function monitorSeason(seasonItem) {
     renderErrors([{ source: "Cleanerr", message: error.message }]);
     button.disabled = false;
     button.classList.remove("is-busy");
-    button.textContent = "Monitor season";
+    button.textContent = "Monitor & search";
   }
 }
 

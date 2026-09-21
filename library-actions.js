@@ -98,7 +98,15 @@ export function createLibraryActions({ getService, fetchJson, sendJson, deleteEn
 
     series.monitored = true;
     season.monitored = monitored;
-    return sendJson(sonarr, `series/${numericSeriesId}`, "PUT", series);
+    const updatedSeries = await sendJson(sonarr, `series/${numericSeriesId}`, "PUT", series);
+    if (monitored) {
+      await sendJson(sonarr, "command", "POST", {
+        name: "SeasonSearch",
+        seriesId: numericSeriesId,
+        seasonNumber: numericSeasonNumber,
+      });
+    }
+    return updatedSeries;
   }
 
   async function setCollectionMonitoring(collectionId, monitored) {

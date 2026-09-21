@@ -122,7 +122,7 @@ test("deleting a collection only deletes movies belonging to it", async () => {
   );
 });
 
-test("monitoring a season also monitors its parent series", async () => {
+test("monitoring a season also monitors its parent series and starts a season search", async () => {
   const { actions, calls } = setup({
     responses: {
       "Sonarr:series/9": {
@@ -136,6 +136,12 @@ test("monitoring a season also monitors its parent series", async () => {
 
   assert.equal(calls.send[0].body.monitored, true);
   assert.equal(calls.send[0].body.seasons[0].monitored, true);
+  assert.deepEqual(calls.send[1], {
+    service: "Sonarr",
+    endpoint: "command",
+    method: "POST",
+    body: { name: "SeasonSearch", seriesId: 9, seasonNumber: 2 },
+  });
 });
 
 test("monitoring and unmonitoring collections updates the requested state", async () => {
