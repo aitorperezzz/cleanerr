@@ -11,6 +11,7 @@ import {
   requestJellyfinLibraryRefresh,
 } from "./jellyfin-refresh.js";
 import { createRadarrSnapshot } from "./radarr-snapshot.js";
+import { groupStorageDisks } from "./storage-disks.js";
 import {
   loadSettings,
   normalizeServiceSettings,
@@ -529,23 +530,8 @@ async function handleApiStorage(req, res) {
       const service = services[serviceName];
       try {
         const disks = await fetchJson(service, "diskspace");
-        const groupedDisks = new Map();
-        for (const disk of disks || []) {
-          const freeSpace = bytesToNumber(disk.freeSpace);
-          const totalSpace = bytesToNumber(disk.totalSpace);
-          const key = `${totalSpace}:${freeSpace}`;
-          const group = groupedDisks.get(key) || {
-            service: serviceName,
-            source: service.label,
-            paths: [],
-            freeSpace,
-            totalSpace,
-          };
-          if (disk.path && !group.paths.includes(disk.path)) group.paths.push(disk.path);
-          groupedDisks.set(key, group);
-        }
         return {
-          disks: [...groupedDisks.values()],
+          disks: groupStorageDisks(disks, serviceName, service.label),
           error: null,
         };
       } catch (error) {
