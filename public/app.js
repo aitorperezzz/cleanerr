@@ -260,16 +260,15 @@ function createSeasonItem(season, series, title) {
   seasonItem.className = "season-item";
   const label = season.seasonNumber === 0 ? "Specials" : `Season ${season.seasonNumber}`;
   const episodes = `${season.episodeFileCount}/${season.totalEpisodeCount} episodes`;
+  const hasFiles = season.episodeFileCount > 0 || season.sizeOnDisk > 0;
   seasonItem.dataset.seriesId = series.id;
   seasonItem.dataset.seriesTitle = title;
   seasonItem.dataset.seasonNumber = season.seasonNumber;
   seasonItem.dataset.seasonName = label;
-  seasonItem.dataset.seasonSize = season.sizeOnDisk;
-  seasonItem.dataset.episodeFileCount = season.episodeFileCount;
-  seasonItem.dataset.monitored = season.monitored;
+  seasonItem.dataset.hasFiles = hasFiles;
   seasonItem.classList.toggle(
     "is-unmonitored-missing",
-    (!season.monitored || !series.monitored) && season.sizeOnDisk === 0,
+    (!season.monitored || !series.monitored) && !hasFiles,
   );
   seasonItem.innerHTML = `
     <span class="season-name"></span>
@@ -282,15 +281,16 @@ function createSeasonItem(season, series, title) {
   seasonItem.querySelector(".season-size").textContent = formatBytes(season.sizeOnDisk);
   const actionButton = seasonItem.querySelector(".season-action-button");
 
-  if (season.sizeOnDisk > 0) {
-    actionButton.classList.add("remove-season-button");
-    actionButton.textContent = "Remove season";
-  } else if (!season.monitored || !series.monitored) {
-    actionButton.classList.add("monitor-season-button");
-    actionButton.textContent = "Monitor & search";
-  } else {
+  if (!series.monitored) {
+    actionButton.classList.add("season-series-unmonitored-button");
+    actionButton.textContent = "Series not monitored";
     actionButton.disabled = true;
-    actionButton.textContent = "No files";
+  } else if (!season.monitored) {
+    actionButton.classList.add("monitor-season-button");
+    actionButton.textContent = "Monitor";
+  } else {
+    actionButton.classList.add("remove-season-button");
+    actionButton.textContent = "Delete";
   }
 
   return seasonItem;
@@ -777,7 +777,7 @@ async function deleteItem(row) {
 async function monitorSeries(row) {
   const title = row.dataset.title;
   const button = row.querySelector(".monitor-series-button");
-  const message = `“${title}” will be monitored in Sonarr.`;
+  const message = `“${title}” and any seasons already marked as monitored will be monitored in Sonarr.`;
   if (!confirmAction(button, message)) return;
 
   button.disabled = true;
@@ -805,7 +805,10 @@ async function monitorSeries(row) {
 
 async function removeSeason(seasonItem) {
   const button = seasonItem.querySelector(".remove-season-button");
-  const message = `${seasonItem.dataset.seasonName} of “${seasonItem.dataset.seriesTitle}” will be unmonitored and ${seasonItem.dataset.episodeFileCount} episode file(s) (${formatBytes(Number(seasonItem.dataset.seasonSize || 0))}) will be deleted from disk.`;
+  const hasFiles = seasonItem.dataset.hasFiles === "true";
+  const message = hasFiles
+    ? `${seasonItem.dataset.seasonName} of “${seasonItem.dataset.seriesTitle}” will be unmonitored in Sonarr and its downloaded episode files will be deleted from disk.`
+    : `${seasonItem.dataset.seasonName} of “${seasonItem.dataset.seriesTitle}” will be unmonitored in Sonarr. There are no files to delete.`;
   if (!confirmDestructiveAction(button, message)) return;
 
   button.disabled = true;
@@ -828,7 +831,7 @@ async function removeSeason(seasonItem) {
     renderErrors([{ source: "Cleanerr", message: error.message }]);
     button.disabled = false;
     button.classList.remove("is-busy");
-    button.textContent = "Remove season";
+    button.textContent = "Delete";
   }
 }
 
@@ -859,7 +862,7 @@ async function monitorSeason(seasonItem) {
     renderErrors([{ source: "Cleanerr", message: error.message }]);
     button.disabled = false;
     button.classList.remove("is-busy");
-    button.textContent = "Monitor & search";
+    button.textContent = "Monitor";
   }
 }
 

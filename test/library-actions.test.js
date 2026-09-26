@@ -85,6 +85,25 @@ test("removing a season unmonitors it and deletes each episode file once", async
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
+test("removing an empty monitored season only unmonitors it", async () => {
+  const { actions, calls } = setup({
+    responses: {
+      "Sonarr:series/5": {
+        id: 5,
+        seasons: [{ seasonNumber: 1, monitored: true }],
+      },
+      "Sonarr:episode?seriesId=5&includeEpisodeFile=true": [],
+    },
+  });
+
+  const result = await actions.removeSeason(5, 1);
+
+  assert.equal(result.deletedFiles, 0);
+  assert.equal(calls.send[0].body.seasons[0].monitored, false);
+  assert.equal(calls.delete.length, 0);
+  assert.equal(calls.jellyfinRefresh.length, 0);
+});
+
 test("collection-safe movie deletion unmonitors its collection first", async () => {
   const { actions, calls } = setup({
     responses: {

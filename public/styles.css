@@ -354,6 +354,13 @@ button.is-busy:disabled {
   background: var(--green);
 }
 
+.season-series-unmonitored-button:disabled {
+  border-color: #353b41;
+  background: #24282c;
+  color: #939da5;
+  opacity: 1;
+}
+
 .poster {
   overflow: hidden;
   width: 48px;
