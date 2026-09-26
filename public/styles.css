@@ -404,6 +404,14 @@ button.is-busy:disabled {
   box-shadow: 0 0 0 3px rgb(179 38 30 / 18%);
 }
 
+.monitor-series-button.is-confirming,
+.monitor-season-button.is-confirming,
+.toggle-collection-monitor-button.is-confirming {
+  border-color: #2d6d57;
+  background: #245342;
+  box-shadow: 0 0 0 3px rgb(87 185 151 / 18%);
+}
+
 .confirmation-notice {
   position: fixed;
   z-index: 30;
@@ -427,6 +435,12 @@ button.is-busy:disabled {
 .confirmation-notice span {
   font-size: 0.85rem;
   line-height: 1.4;
+}
+
+.confirmation-notice.is-action {
+  border-color: #34745e;
+  background: #173a2f;
+  color: #a9efd6;
 }
 
 .toggle-collection-monitor-button,
@@ -1191,8 +1205,10 @@ body.detail-open {
 }
 
 .detail-content {
+  --confirmation-clearance: 0px;
+
   overflow-y: auto;
-  padding: 20px;
+  padding: 20px 20px calc(20px + var(--confirmation-clearance));
   overscroll-behavior: contain;
 }
 
@@ -1434,7 +1450,9 @@ body.detail-open {
   }
 
   .detail-content {
-    padding: 15px 12px calc(24px + env(safe-area-inset-bottom));
+    padding: 15px 12px calc(
+      24px + env(safe-area-inset-bottom) + var(--confirmation-clearance)
+    );
   }
 
   .detail-hero {

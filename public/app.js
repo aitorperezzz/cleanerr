@@ -24,6 +24,7 @@ const serviceForms = document.querySelectorAll(".service-settings");
 const brand = document.querySelector(".brand");
 const searchInput = document.querySelector("#searchInput");
 const confirmationNotice = document.querySelector("#confirmationNotice");
+const confirmationTitle = document.querySelector("#confirmationTitle");
 const confirmationMessage = document.querySelector("#confirmationMessage");
 const storageStateElement = document.querySelector("#storageState");
 const storageList = document.querySelector("#storageList");
@@ -476,7 +477,7 @@ function openCardDetail(card) {
 function closeDetail({ restoreFocus = true } = {}) {
   if (detailPanel.hidden) return;
   if (activeConfirmationButton && detailPanel.contains(activeConfirmationButton)) {
-    resetDestructiveConfirmation(activeConfirmationButton);
+    resetActionConfirmation(activeConfirmationButton);
   }
   detailPanel.classList.remove("is-open");
   detailPanel.hidden = true;
@@ -639,7 +640,7 @@ async function navigateToView(view, { historyMode = "push", resetSearch = true }
 const confirmationTimers = new WeakMap();
 let activeConfirmationButton = null;
 
-function resetDestructiveConfirmation(button) {
+function resetActionConfirmation(button) {
   const timer = confirmationTimers.get(button);
   if (timer) clearTimeout(timer);
   confirmationTimers.delete(button);
@@ -652,28 +653,51 @@ function resetDestructiveConfirmation(button) {
 
   if (activeConfirmationButton === button) {
     activeConfirmationButton = null;
+    detailContent.style.removeProperty("--confirmation-clearance");
     confirmationNotice.hidden = true;
+    confirmationNotice.classList.remove("is-action");
+    confirmationTitle.textContent = "Confirm action";
     confirmationMessage.textContent = "";
   }
 }
 
-function confirmDestructiveAction(button, message) {
+function keepConfirmationButtonVisible(button) {
+  if (!detailPanel.contains(button)) return;
+
+  requestAnimationFrame(() => {
+    if (activeConfirmationButton !== button || !button.isConnected) return;
+    const panelBottom = detailPanel.getBoundingClientRect().bottom;
+    const noticeTop = confirmationNotice.getBoundingClientRect().top;
+    const clearance = Math.max(0, panelBottom - noticeTop + 12);
+    detailContent.style.setProperty("--confirmation-clearance", `${clearance}px`);
+    button.scrollIntoView({ behavior: "smooth", block: "center", inline: "nearest" });
+  });
+}
+
+function confirmAction(button, message, { title = "Confirm action", destructive = false } = {}) {
   if (button.dataset.confirming === "true") {
-    resetDestructiveConfirmation(button);
+    resetActionConfirmation(button);
     return true;
   }
 
-  if (activeConfirmationButton) resetDestructiveConfirmation(activeConfirmationButton);
+  if (activeConfirmationButton) resetActionConfirmation(activeConfirmationButton);
   button.dataset.defaultLabel = button.textContent;
   button.dataset.confirming = "true";
   button.classList.add("is-confirming");
   button.setAttribute("aria-pressed", "true");
   button.textContent = "Are you sure?";
   activeConfirmationButton = button;
+  confirmationNotice.classList.toggle("is-action", !destructive);
+  confirmationTitle.textContent = title;
   confirmationMessage.textContent = message;
   confirmationNotice.hidden = false;
-  confirmationTimers.set(button, setTimeout(() => resetDestructiveConfirmation(button), 5000));
+  keepConfirmationButtonVisible(button);
+  confirmationTimers.set(button, setTimeout(() => resetActionConfirmation(button), 5000));
   return false;
+}
+
+function confirmDestructiveAction(button, message) {
+  return confirmAction(button, message, { title: "Confirm deletion", destructive: true });
 }
 
 function renderView() {
@@ -752,10 +776,10 @@ async function deleteItem(row) {
 
 async function monitorSeries(row) {
   const title = row.dataset.title;
-  const confirmed = window.confirm(`Monitor "${title}" in Sonarr?`);
-  if (!confirmed) return;
-
   const button = row.querySelector(".monitor-series-button");
+  const message = `“${title}” will be monitored in Sonarr.`;
+  if (!confirmAction(button, message)) return;
+
   button.disabled = true;
   button.classList.add("is-busy");
   button.textContent = "Updating...";
@@ -811,12 +835,10 @@ async function removeSeason(seasonItem) {
 async function monitorSeason(seasonItem) {
   const seriesTitle = seasonItem.dataset.seriesTitle;
   const seasonName = seasonItem.dataset.seasonName;
-  const confirmed = window.confirm(
-    `Monitor "${seriesTitle}" and search ${seasonName} in Sonarr now?`,
-  );
-  if (!confirmed) return;
-
   const button = seasonItem.querySelector(".monitor-season-button");
+  const message = `${seasonName} of “${seriesTitle}” will be monitored and searched in Sonarr now.`;
+  if (!confirmAction(button, message)) return;
+
   button.disabled = true;
   button.classList.add("is-busy");
   button.textContent = "Starting search...";
@@ -845,10 +867,10 @@ async function setCollectionMonitoring(card) {
   const title = card.dataset.title;
   const button = card.querySelector(".toggle-collection-monitor-button");
   const shouldMonitor = button.dataset.monitored !== "true";
-  const confirmed = window.confirm(
-    `${shouldMonitor ? "Monitor" : "Stop monitoring"} "${title}" in Radarr?`,
-  );
-  if (!confirmed) return;
+  const message = shouldMonitor
+    ? `“${title}” will be monitored in Radarr.`
+    : `Radarr will stop monitoring “${title}”.`;
+  if (!confirmAction(button, message)) return;
 
   button.disabled = true;
   button.classList.add("is-busy");
@@ -1076,12 +1098,12 @@ window.addEventListener("popstate", () => {
 });
 document.addEventListener("click", (event) => {
   if (event.target.closest(".is-confirming")) return;
-  if (activeConfirmationButton) resetDestructiveConfirmation(activeConfirmationButton);
+  if (activeConfirmationButton) resetActionConfirmation(activeConfirmationButton);
 });
 document.addEventListener("keydown", (event) => {
   if (event.key !== "Escape") return;
   if (activeConfirmationButton) {
-    resetDestructiveConfirmation(activeConfirmationButton);
+    resetActionConfirmation(activeConfirmationButton);
     return;
   }
   closeDetail();

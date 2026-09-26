@@ -6,6 +6,10 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
 import { createLibraryActions } from "./library-actions.js";
+import {
+  createJellyfinRefreshScheduler,
+  requestJellyfinLibraryRefresh,
+} from "./jellyfin-refresh.js";
 import { createRadarrSnapshot } from "./radarr-snapshot.js";
 import {
   loadSettings,
@@ -165,6 +169,15 @@ async function deleteEndpoint(service, url) {
   if (service === services.radarr) radarrSnapshot.invalidate();
 }
 
+const scheduleJellyfinLibraryRefresh = createJellyfinRefreshScheduler(
+  () => requestJellyfinLibraryRefresh(services.jellyfin),
+  {
+    onError: (error) => {
+      console.warn(`Could not refresh Jellyfin after deletion: ${error.message}`);
+    },
+  },
+);
+
 async function curlJson(service, url, options = {}) {
   const text = await curlText(service, url, options);
   if (!text) return null;
@@ -220,6 +233,7 @@ const {
   fetchJson,
   sendJson,
   deleteEndpoint,
+  refreshJellyfinLibrary: scheduleJellyfinLibraryRefresh,
 });
 
 async function proxyMedia(req, res) {

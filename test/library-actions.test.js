@@ -2,12 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createLibraryActions } from "../library-actions.js";
 
-function setup({ responses = {} } = {}) {
+function setup({ responses = {}, deleteEndpoint } = {}) {
   const services = {
     radarr: { label: "Radarr", url: "http://radarr:7878" },
     sonarr: { label: "Sonarr", url: "http://sonarr:8989" },
   };
-  const calls = { fetch: [], send: [], delete: [] };
+  const calls = { fetch: [], send: [], delete: [], jellyfinRefresh: [] };
   const actions = createLibraryActions({
     getService: (name) => services[name],
     fetchJson: async (service, endpoint) => {
@@ -19,8 +19,11 @@ function setup({ responses = {} } = {}) {
       calls.send.push({ service: service.label, endpoint, method, body: structuredClone(body) });
       return body;
     },
-    deleteEndpoint: async (service, url) => {
+    deleteEndpoint: deleteEndpoint || (async (service, url) => {
       calls.delete.push({ service: service.label, url: String(url) });
+    }),
+    refreshJellyfinLibrary: async () => {
+      calls.jellyfinRefresh.push(true);
     },
   });
   return { actions, calls };
@@ -36,6 +39,7 @@ test("movie deletion removes files and adds a Radarr import exclusion", async ()
   assert.equal(url.pathname, "/api/v3/movie/42");
   assert.equal(url.searchParams.get("deleteFiles"), "true");
   assert.equal(url.searchParams.get("addImportExclusion"), "true");
+  assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
 test("series deletion uses the Sonarr import-list exclusion", async () => {
@@ -45,6 +49,7 @@ test("series deletion uses the Sonarr import-list exclusion", async () => {
   assert.equal(url.pathname, "/api/v3/series/7");
   assert.equal(url.searchParams.get("deleteFiles"), "true");
   assert.equal(url.searchParams.get("addImportListExclusion"), "true");
+  assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
 test("removing a season unmonitors it and deletes each episode file once", async () => {
@@ -77,6 +82,7 @@ test("removing a season unmonitors it and deletes each episode file once", async
     calls.delete.map((call) => new URL(call.url).pathname),
     ["/api/v3/episodefile/10", "/api/v3/episodefile/11"],
   );
+  assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
 test("collection-safe movie deletion unmonitors its collection first", async () => {
@@ -95,6 +101,7 @@ test("collection-safe movie deletion unmonitors its collection first", async () 
   assert.equal(calls.send[0].endpoint, "collection/3");
   assert.equal(calls.send[0].body.monitored, false);
   assert.equal(new URL(calls.delete[0].url).pathname, "/api/v3/movie/8");
+  assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
 test("deleting a collection only deletes movies belonging to it", async () => {
@@ -120,6 +127,56 @@ test("deleting a collection only deletes movies belonging to it", async () => {
     calls.delete.map((call) => new URL(call.url).pathname),
     ["/api/v3/movie/11", "/api/v3/movie/12"],
   );
+  assert.equal(calls.jellyfinRefresh.length, 1);
+});
+
+test("a partial collection deletion still refreshes Jellyfin", async () => {
+  let deleteCount = 0;
+  const { actions, calls } = setup({
+    responses: {
+      "Radarr:collection/4": {
+        id: 4,
+        monitored: true,
+        movies: [{ tmdbId: 1 }, { tmdbId: 2 }],
+      },
+      "Radarr:movie": [
+        { id: 11, tmdbId: 1 },
+        { id: 12, tmdbId: 2 },
+      ],
+    },
+    deleteEndpoint: async () => {
+      deleteCount += 1;
+      if (deleteCount === 2) throw new Error("Radarr deletion failed");
+    },
+  });
+
+  await assert.rejects(actions.deleteCollection(4), { message: "Radarr deletion failed" });
+  assert.equal(deleteCount, 2);
+  assert.equal(calls.jellyfinRefresh.length, 1);
+});
+
+test("a partial season deletion still refreshes Jellyfin", async () => {
+  let deleteCount = 0;
+  const { actions, calls } = setup({
+    responses: {
+      "Sonarr:series/5": {
+        id: 5,
+        seasons: [{ seasonNumber: 1, monitored: true }],
+      },
+      "Sonarr:episode?seriesId=5&includeEpisodeFile=true": [
+        { seasonNumber: 1, episodeFileId: 10 },
+        { seasonNumber: 1, episodeFileId: 11 },
+      ],
+    },
+    deleteEndpoint: async () => {
+      deleteCount += 1;
+      if (deleteCount === 2) throw new Error("Sonarr deletion failed");
+    },
+  });
+
+  await assert.rejects(actions.removeSeason(5, 1), { message: "Sonarr deletion failed" });
+  assert.equal(deleteCount, 2);
+  assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
 test("monitoring a season also monitors its parent series and starts a season search", async () => {
@@ -157,5 +214,5 @@ test("invalid identifiers are rejected before calling a service", async () => {
   const { actions, calls } = setup();
   await assert.rejects(actions.deleteFromService("radarr", 0), { message: "Invalid library item", status: 400 });
   await assert.rejects(actions.removeSeason(1, -1), { message: "Invalid season", status: 400 });
-  assert.deepEqual(calls, { fetch: [], send: [], delete: [] });
+  assert.deepEqual(calls, { fetch: [], send: [], delete: [], jellyfinRefresh: [] });
 });

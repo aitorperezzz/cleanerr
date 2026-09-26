@@ -37,7 +37,10 @@ The Settings page stores these six values:
 Every service has separate **Test connection** and **Save** actions. Saved API
 keys are never sent back to the browser; leave the API key field empty to keep
 the existing value. Jellyfin can be configured and tested now, although its
-library is not yet displayed by Cleanerr.
+library is not yet displayed by Cleanerr. After Cleanerr deletes media through
+Radarr or Sonarr, it asks Jellyfin to refresh its library. Closely timed deletes
+are grouped into a single refresh, and a Jellyfin error does not change the
+result of a deletion that already completed.
 
 During local development, settings are written to `data/config.json`. The
 Docker image sets `NODE_ENV=production`, which changes the location to

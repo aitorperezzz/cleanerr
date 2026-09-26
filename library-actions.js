@@ -20,12 +20,18 @@ function bytesToNumber(value) {
   return Number.isFinite(Number(value)) ? Number(value) : 0;
 }
 
-export function createLibraryActions({ getService, fetchJson, sendJson, deleteEndpoint }) {
+export function createLibraryActions({
+  getService,
+  fetchJson,
+  sendJson,
+  deleteEndpoint,
+  refreshJellyfinLibrary = async () => {},
+}) {
   function service(name) {
     return getService(name);
   }
 
-  async function deleteFromService(serviceName, itemId) {
+  async function deleteFromServiceWithoutRefresh(serviceName, itemId) {
     const targetService = service(serviceName);
     const numericId = positiveInteger(itemId, "Invalid library item");
     if (!targetService || !["radarr", "sonarr"].includes(serviceName)) {
@@ -41,6 +47,12 @@ export function createLibraryActions({ getService, fetchJson, sendJson, deleteEn
     url.searchParams.set(exclusionParam, "true");
     await deleteEndpoint(targetService, url);
     return { source: targetService.label, id: numericId };
+  }
+
+  async function deleteFromService(serviceName, itemId) {
+    const deleted = await deleteFromServiceWithoutRefresh(serviceName, itemId);
+    await refreshJellyfinLibrary();
+    return deleted;
   }
 
   async function deleteEpisodeFile(episodeFileId) {
@@ -69,7 +81,13 @@ export function createLibraryActions({ getService, fetchJson, sendJson, deleteEn
         size: bytesToNumber(episode.episodeFile?.size),
       }));
     const uniqueEpisodeFiles = [...new Map(episodeFiles.map((file) => [file.id, file])).values()];
-    for (const episodeFile of uniqueEpisodeFiles) await deleteEpisodeFile(episodeFile.id);
+    if (uniqueEpisodeFiles.length > 0) {
+      try {
+        for (const episodeFile of uniqueEpisodeFiles) await deleteEpisodeFile(episodeFile.id);
+      } finally {
+        await refreshJellyfinLibrary();
+      }
+    }
 
     return {
       source: "Sonarr",
@@ -129,7 +147,13 @@ export function createLibraryActions({ getService, fetchJson, sendJson, deleteEn
 
     collection.monitored = false;
     await sendJson(radarr, `collection/${numericId}`, "PUT", collection);
-    for (const movie of moviesToDelete) await deleteFromService("radarr", movie.id);
+    if (moviesToDelete.length > 0) {
+      try {
+        for (const movie of moviesToDelete) await deleteFromServiceWithoutRefresh("radarr", movie.id);
+      } finally {
+        await refreshJellyfinLibrary();
+      }
+    }
 
     return { source: "Radarr", id: numericId, deletedMovies: moviesToDelete.length };
   }
@@ -149,7 +173,8 @@ export function createLibraryActions({ getService, fetchJson, sendJson, deleteEn
       collection.monitored = false;
       await sendJson(radarr, `collection/${collection.id}`, "PUT", collection);
     }
-    await deleteFromService("radarr", numericMovieId);
+    await deleteFromServiceWithoutRefresh("radarr", numericMovieId);
+    await refreshJellyfinLibrary();
 
     return {
       source: "Radarr",
