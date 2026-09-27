@@ -50,6 +50,8 @@ let detailTrigger = null;
 const searchTextCache = new WeakMap();
 const viewRenderCache = new Map();
 const mediaCards = new WeakMap();
+const GRID_BATCH_SIZE = 24;
+let gridRenderToken = 0;
 
 const viewCopy = {
   all: ["Overview", "Your library sorted by disk usage."],
@@ -160,6 +162,7 @@ function currentViewCacheKey() {
 }
 
 function clearViewRenderCache() {
+  gridRenderToken += 1;
   viewRenderCache.clear();
   renderedGridKey = null;
   mediaGrid.replaceChildren();
@@ -242,17 +245,34 @@ function createCollectionCard(collection) {
 
 function renderGrid(items, cacheKey, kind = "media") {
   if (cacheKey && renderedGridKey === cacheKey) return;
-  const cached = cacheKey ? viewRenderCache.get(cacheKey) : null;
-  if (cached) {
-    mediaGrid.replaceChildren(...cached.nodes);
-    renderedGridKey = cacheKey;
-    return;
+  const token = ++gridRenderToken;
+  const entry = (cacheKey && viewRenderCache.get(cacheKey)) || {
+    items,
+    kind,
+    nodes: [],
+  };
+  mediaGrid.replaceChildren(...entry.nodes);
+  renderedGridKey = cacheKey;
+  if (cacheKey) viewRenderCache.set(cacheKey, entry);
+
+  function appendBatch() {
+    if (token !== gridRenderToken) return;
+    const end = Math.min(entry.nodes.length + GRID_BATCH_SIZE, entry.items.length);
+    const fragment = document.createDocumentFragment();
+    for (let index = entry.nodes.length; index < end; index += 1) {
+      const node = entry.kind === "collection"
+        ? createCollectionCard(entry.items[index])
+        : createMediaCard(entry.items[index]);
+      entry.nodes.push(node);
+      fragment.append(node);
+    }
+    mediaGrid.append(fragment);
+    if (end < entry.items.length) {
+      requestAnimationFrame(() => setTimeout(appendBatch, 0));
+    }
   }
 
-  const nodes = items.map(kind === "collection" ? createCollectionCard : createMediaCard);
-  mediaGrid.replaceChildren(...nodes);
-  renderedGridKey = cacheKey;
-  if (cacheKey) viewRenderCache.set(cacheKey, { nodes });
+  appendBatch();
 }
 
 function createSeasonItem(season, series, title) {
@@ -277,7 +297,10 @@ function createSeasonItem(season, series, title) {
     <button class="season-action-button" type="button"></button>
   `;
   seasonItem.querySelector(".season-name").textContent = label;
-  seasonItem.querySelector(".season-episodes").textContent = episodes;
+  const episodeCount = seasonItem.querySelector(".season-episodes");
+  episodeCount.textContent = episodes;
+  episodeCount.dataset.short = `${season.episodeFileCount}/${season.totalEpisodeCount}`;
+  episodeCount.setAttribute("aria-label", episodes);
   seasonItem.querySelector(".season-size").textContent = formatBytes(season.sizeOnDisk);
   const actionButton = seasonItem.querySelector(".season-action-button");
 
@@ -330,9 +353,11 @@ function detailFact(label, value, className = "") {
 
 function prepareDetailPanel(trigger) {
   detailTrigger = trigger;
+  detailContent.scrollTop = 0;
   detailPanel.hidden = false;
   detailBackdrop.hidden = false;
   document.body.classList.add("detail-open");
+  detailCloseButton.setAttribute("aria-label", window.innerWidth <= 720 ? "Back to library" : "Close details");
   requestAnimationFrame(() => detailPanel.classList.add("is-open"));
   detailCloseButton.focus({ preventScroll: true });
 }
@@ -416,7 +441,7 @@ function openMediaDetail(card, item) {
     section.append(heading, seasonList);
     detailContent.append(section);
   }
-  prepareDetailPanel(card.querySelector(".media-card-button"));
+  prepareDetailPanel(card?.querySelector(".media-card-button") || null);
 }
 
 function openCollectionDetail(card, collection) {
@@ -467,14 +492,55 @@ function openCollectionDetail(card, collection) {
   detailContent
     .querySelector(".collection-movies")
     .replaceChildren(...collection.movies.map(createCollectionMovie));
-  prepareDetailPanel(card.querySelector(".media-card-button"));
+  prepareDetailPanel(card?.querySelector(".media-card-button") || null);
+}
+
+function detailRouteKey(record) {
+  return record.kind === "collection"
+    ? `collection:${record.item.id}`
+    : `${record.item.service}:${record.item.id}`;
 }
 
 function openCardDetail(card) {
   const record = mediaCards.get(card);
   if (!record) return;
+  if (window.innerWidth <= 720) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("detail", detailRouteKey(record));
+    window.history.pushState({ detailEntry: true }, "", url);
+  }
   if (record.kind === "collection") openCollectionDetail(card, record.item);
   else openMediaDetail(card, record.item);
+}
+
+function openDetailFromLocation() {
+  const key = new URLSearchParams(window.location.search).get("detail");
+  if (!key || activeView === "settings") return;
+  const [source, id] = key.split(":");
+  if (!id) return;
+  if (source === "collection") {
+    const collection = collectionItems.find((item) => String(item.id) === id);
+    if (collection) openCollectionDetail(null, collection);
+    return;
+  }
+  const item = libraryItems.find((entry) => entry.service === source && String(entry.id) === id);
+  if (item) openMediaDetail(null, item);
+}
+
+function dismissDetail() {
+  const url = new URL(window.location.href);
+  if (!url.searchParams.has("detail")) {
+    closeDetail();
+    return;
+  }
+  if (window.history.state?.detailEntry) {
+    closeDetail();
+    window.history.back();
+    return;
+  }
+  url.searchParams.delete("detail");
+  window.history.replaceState({}, "", url);
+  closeDetail();
 }
 
 function closeDetail({ restoreFocus = true } = {}) {
@@ -626,18 +692,21 @@ function clearSearch() {
 }
 
 async function navigateToView(view, { historyMode = "push", resetSearch = true } = {}) {
+  const viewChanged = activeView !== view;
+  const fromDetail = new URLSearchParams(window.location.search).has("detail");
   closeDetail({ restoreFocus: false });
   if (resetSearch) clearSearch();
   selectView(view);
-  if (historyMode) updateRoute(view, historyMode);
+  if (historyMode) updateRoute(view, fromDetail ? "replace" : historyMode);
   renderView();
-  window.scrollTo(0, 0);
+  if (viewChanged) window.scrollTo(0, 0);
 
   if (activeView === "settings") {
     await loadStorage();
   } else if (libraryItems.length === 0) {
     await loadLibrary();
   }
+  if (!historyMode) openDetailFromLocation();
 }
 
 const confirmationTimers = new WeakMap();
@@ -716,6 +785,8 @@ function renderView() {
   mediaGrid.hidden = true;
 
   if (isSettingsView) {
+    gridRenderToken += 1;
+    renderedGridKey = null;
     renderSettings();
     renderStorage();
     return;
@@ -1022,6 +1093,10 @@ async function saveServiceSettings(form) {
 }
 
 async function loadLibrary() {
+  if (!detailPanel.hidden && new URLSearchParams(window.location.search).has("detail")) {
+    if (window.history.state?.detailEntry) window.history.back();
+    else window.history.replaceState({}, "", viewPaths[activeView]);
+  }
   closeDetail({ restoreFocus: false });
   refreshButton.disabled = true;
   refreshButton.classList.add("is-busy");
@@ -1110,7 +1185,8 @@ searchInput.addEventListener("keydown", (event) => {
   renderView();
 });
 window.addEventListener("popstate", () => {
-  navigateToView(viewFromLocation(), { historyMode: null });
+  if (!new URLSearchParams(window.location.search).has("detail")) closeDetail();
+  navigateToView(viewFromLocation(), { historyMode: null, resetSearch: false });
 });
 document.addEventListener("click", (event) => {
   if (event.target.closest(".is-confirming")) return;
@@ -1122,7 +1198,7 @@ document.addEventListener("keydown", (event) => {
     resetActionConfirmation(activeConfirmationButton);
     return;
   }
-  closeDetail();
+  dismissDetail();
 });
 mediaGrid.addEventListener("click", (event) => {
   const button = event.target.closest(".media-card-button");
@@ -1164,8 +1240,8 @@ detailContent.addEventListener("click", (event) => {
     deleteCollection(detailPanel);
   }
 });
-detailCloseButton.addEventListener("click", () => closeDetail());
-detailBackdrop.addEventListener("click", () => closeDetail());
+detailCloseButton.addEventListener("click", dismissDetail);
+detailBackdrop.addEventListener("click", dismissDetail);
 
 serviceForms.forEach((form) => {
   form.addEventListener("submit", (event) => {
@@ -1196,6 +1272,7 @@ async function initialize() {
       return;
     }
     await loadLibrary();
+    openDetailFromLocation();
   } catch (error) {
     await navigateToView("settings", { historyMode: "replace" });
     renderErrors([{ source: "Cleanerr", message: error.message }]);
