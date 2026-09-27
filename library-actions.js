@@ -142,20 +142,44 @@ export function createLibraryActions({
       fetchJson(radarr, `collection/${numericId}`),
       fetchJson(radarr, "movie"),
     ]);
-    const collectionTmdbIds = new Set((collection.movies || []).map((movie) => movie.tmdbId));
+    const collectionTmdbIds = new Set(
+      (collection.movies || [])
+        .map((movie) => movie.tmdbId)
+        .filter((id) => Number.isInteger(id) && id > 0),
+    );
     const moviesToDelete = movies.filter((movie) => collectionTmdbIds.has(movie.tmdbId));
 
     collection.monitored = false;
     await sendJson(radarr, `collection/${numericId}`, "PUT", collection);
+    let deletedMovies = 0;
+    let failure = null;
     if (moviesToDelete.length > 0) {
       try {
-        for (const movie of moviesToDelete) await deleteFromServiceWithoutRefresh("radarr", movie.id);
+        for (const movie of moviesToDelete) {
+          try {
+            await deleteFromServiceWithoutRefresh("radarr", movie.id);
+            deletedMovies += 1;
+          } catch (error) {
+            failure = {
+              id: movie.id,
+              title: movie.title || `Movie ${movie.id}`,
+              message: error.message,
+            };
+            break;
+          }
+        }
       } finally {
         await refreshJellyfinLibrary();
       }
     }
 
-    return { source: "Radarr", id: numericId, deletedMovies: moviesToDelete.length };
+    return {
+      source: "Radarr",
+      id: numericId,
+      totalMovies: moviesToDelete.length,
+      deletedMovies,
+      failure,
+    };
   }
 
   async function unmonitorCollectionAndDeleteMovie(movieId) {

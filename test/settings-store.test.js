@@ -37,6 +37,26 @@ test("service settings normalize URLs and preserve a saved API key", () => {
   );
 });
 
+test("Jellyfin can be disabled without blocking Radarr and Sonarr", () => {
+  const settings = {
+    radarr: { url: "http://radarr", apiKey: "r" },
+    sonarr: { url: "http://sonarr", apiKey: "s" },
+    jellyfin: normalizeServiceSettings(
+      { url: "", apiKey: "" },
+      { url: "http://jellyfin", apiKey: "saved-key" },
+      { optional: true },
+    ),
+  };
+
+  assert.deepEqual(settings.jellyfin, { url: "", apiKey: "" });
+  assert.equal(publicSettings(settings).complete, true);
+  assert.equal(publicSettings(settings).services.jellyfin.configured, false);
+  assert.throws(
+    () => normalizeServiceSettings({ url: "", apiKey: "" }),
+    { message: "URL must be a valid absolute URL", status: 400 },
+  );
+});
+
 test("public settings never expose API keys", () => {
   const result = publicSettings({
     radarr: { url: "http://radarr", apiKey: "secret-r" },

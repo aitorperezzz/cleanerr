@@ -36,8 +36,11 @@ export function validateServiceName(name) {
   }
 }
 
-export function normalizeServiceSettings(input, current = {}) {
-  const url = normalizeUrl(input?.url);
+export function normalizeServiceSettings(input, current = {}, { optional = false } = {}) {
+  const enteredUrl = String(input?.url || "").trim();
+  if (optional && !enteredUrl) return { url: "", apiKey: "" };
+
+  const url = normalizeUrl(enteredUrl);
   const apiKey = String(input?.apiKey || current.apiKey || "").trim();
 
   if (!apiKey) {
@@ -86,6 +89,6 @@ export function publicSettings(settings) {
 
   return {
     services,
-    complete: serviceNames.every((name) => services[name].configured),
+    complete: ["radarr", "sonarr"].every((name) => services[name].configured),
   };
 }

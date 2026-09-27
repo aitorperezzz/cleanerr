@@ -14,7 +14,7 @@ collections by size and perform monitoring or deletion actions from one place.
 - A reachable Radarr instance
 - A reachable Sonarr instance
 - API keys with permission to read and modify those instances
-- `curl` is recommended as a fallback when Node.js cannot complete a request
+- `curl` is recommended as a fallback for library reads when Node.js cannot complete a request
 
 ## Installation
 
@@ -28,19 +28,26 @@ service can be configured and tested independently.
 
 ## Configuration
 
-The Settings page stores these six values:
+The Settings page can store these six values:
 
 - Radarr URL and API key
 - Sonarr URL and API key
-- Jellyfin URL and API key
+- Jellyfin URL and API key (optional)
 
 Every service has separate **Test connection** and **Save** actions. Saved API
 keys are never sent back to the browser; leave the API key field empty to keep
-the existing value. Jellyfin can be configured and tested now, although its
-library is not yet displayed by Cleanerr. After Cleanerr deletes media through
-Radarr or Sonarr, it asks Jellyfin to refresh its library. Closely timed deletes
-are grouped into a single refresh, and a Jellyfin error does not change the
-result of a deletion that already completed.
+the existing value. Radarr and Sonarr are required; Jellyfin is optional. When
+Jellyfin is configured, Cleanerr asks it to refresh its library after deleting
+media through Radarr or Sonarr. Closely timed deletes are grouped into a single
+refresh, and a Jellyfin error does not change the result of a deletion that
+already completed. Leave Jellyfin's URL empty and save to disable it.
+
+Writes to Radarr and Sonarr are not automatically retried after a connection
+error or timeout: the service may already have completed the action. Check the
+service before repeating it. Deleting a collection's movies unmonitors the
+collection and removes its existing movies and files, but the collection itself
+remains in Radarr. If a movie deletion cannot be confirmed, Cleanerr stops and
+reports how many earlier deletions were confirmed.
 
 During local development, settings are written to `data/config.json`. The
 Docker image sets `NODE_ENV=production`, which changes the location to

@@ -129,18 +129,21 @@ test("deleting a collection only deletes movies belonging to it", async () => {
       "Radarr:collection/4": {
         id: 4,
         monitored: true,
-        movies: [{ tmdbId: 1 }, { tmdbId: 2 }],
+        movies: [{ tmdbId: 1 }, { tmdbId: 2 }, { title: "Unknown" }],
       },
       "Radarr:movie": [
         { id: 11, tmdbId: 1 },
         { id: 12, tmdbId: 2 },
         { id: 13, tmdbId: 3 },
+        { id: 14 },
       ],
     },
   });
   const result = await actions.deleteCollection(4);
 
   assert.equal(result.deletedMovies, 2);
+  assert.equal(result.totalMovies, 2);
+  assert.equal(result.failure, null);
   assert.equal(calls.send[0].body.monitored, false);
   assert.deepEqual(
     calls.delete.map((call) => new URL(call.url).pathname),
@@ -156,11 +159,12 @@ test("a partial collection deletion still refreshes Jellyfin", async () => {
       "Radarr:collection/4": {
         id: 4,
         monitored: true,
-        movies: [{ tmdbId: 1 }, { tmdbId: 2 }],
+        movies: [{ tmdbId: 1 }, { tmdbId: 2 }, { tmdbId: 3 }],
       },
       "Radarr:movie": [
-        { id: 11, tmdbId: 1 },
-        { id: 12, tmdbId: 2 },
+        { id: 11, tmdbId: 1, title: "First" },
+        { id: 12, tmdbId: 2, title: "Second" },
+        { id: 13, tmdbId: 3, title: "Third" },
       ],
     },
     deleteEndpoint: async () => {
@@ -169,8 +173,15 @@ test("a partial collection deletion still refreshes Jellyfin", async () => {
     },
   });
 
-  await assert.rejects(actions.deleteCollection(4), { message: "Radarr deletion failed" });
+  const result = await actions.deleteCollection(4);
   assert.equal(deleteCount, 2);
+  assert.equal(result.deletedMovies, 1);
+  assert.equal(result.totalMovies, 3);
+  assert.deepEqual(result.failure, {
+    id: 12,
+    title: "Second",
+    message: "Radarr deletion failed",
+  });
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
 

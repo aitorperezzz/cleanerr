@@ -11,6 +11,7 @@ import {
   requestJellyfinLibraryRefresh,
 } from "./jellyfin-refresh.js";
 import { createRadarrSnapshot } from "./radarr-snapshot.js";
+import { createServiceTransport, requireConfiguredService } from "./service-transport.js";
 import { groupStorageDisks } from "./storage-disks.js";
 import {
   loadSettings,
@@ -28,6 +29,12 @@ const { host: HOST, port: PORT } = config;
 const serviceLabels = { radarr: "Radarr", sonarr: "Sonarr", jellyfin: "Jellyfin" };
 let settings = await loadSettings(config.settingsFile);
 let services = buildServices(settings);
+const { fetchJson, sendJson, deleteEndpoint } = createServiceTransport({
+  readFallback: curlJson,
+  onWrite: (service) => {
+    if (service === services.radarr) radarrSnapshot.invalidate();
+  },
+});
 const radarrSnapshot = createRadarrSnapshot({
   getService: () => services.radarr,
   fetchJson,
@@ -40,14 +47,6 @@ function buildServices(currentSettings) {
       { label, ...currentSettings[name] },
     ]),
   );
-}
-
-function requireConfiguredService(service) {
-  if (!service?.url || !service.apiKey) {
-    const error = new Error(`${service?.label || "Service"} is not configured`);
-    error.status = 503;
-    throw error;
-  }
 }
 
 const contentTypes = {
@@ -86,90 +85,6 @@ function getPosterUrl(serviceName, images = []) {
   return `/api/media?service=${serviceName}&path=${encodeURIComponent(poster.url)}`;
 }
 
-async function fetchJson(service, endpoint) {
-  requireConfiguredService(service);
-  const url = `${service.url}/api/v3/${endpoint}`;
-  let response;
-
-  try {
-    response = await fetch(url, {
-      headers: {
-        "X-Api-Key": service.apiKey,
-        accept: "application/json",
-      },
-      signal: AbortSignal.timeout(10000),
-    });
-  } catch (error) {
-    return curlJson(service, url);
-  }
-
-  if (!response.ok) {
-    throw new Error(`${service.label} responded ${response.status}`);
-  }
-
-  return response.json();
-}
-
-async function sendJson(service, endpoint, method, body) {
-  requireConfiguredService(service);
-  const url = `${service.url}/api/v3/${endpoint}`;
-  let response;
-
-  try {
-    response = await fetch(url, {
-      method,
-      headers: {
-        "X-Api-Key": service.apiKey,
-        accept: "application/json",
-        "content-type": "application/json",
-      },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(20000),
-    });
-  } catch {
-    const data = await curlJson(service, url, { method, body });
-    if (service === services.radarr) radarrSnapshot.invalidate();
-    return data;
-  }
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`${service.label} responded ${response.status}${detail ? `: ${detail}` : ""}`);
-  }
-
-  if (service === services.radarr) radarrSnapshot.invalidate();
-
-  if (response.status === 204) return null;
-  return response.json().catch(() => null);
-}
-
-async function deleteEndpoint(service, url) {
-  requireConfiguredService(service);
-  let response;
-
-  try {
-    response = await fetch(url, {
-      method: "DELETE",
-      headers: {
-        "X-Api-Key": service.apiKey,
-        accept: "application/json",
-      },
-      signal: AbortSignal.timeout(20000),
-    });
-  } catch {
-    await curlText(service, url, { method: "DELETE" });
-    if (service === services.radarr) radarrSnapshot.invalidate();
-    return;
-  }
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`${service.label} responded ${response.status}${detail ? `: ${detail}` : ""}`);
-  }
-
-  if (service === services.radarr) radarrSnapshot.invalidate();
-}
-
 const scheduleJellyfinLibraryRefresh = createJellyfinRefreshScheduler(
   () => requestJellyfinLibraryRefresh(services.jellyfin),
   {
@@ -179,13 +94,13 @@ const scheduleJellyfinLibraryRefresh = createJellyfinRefreshScheduler(
   },
 );
 
-async function curlJson(service, url, options = {}) {
-  const text = await curlText(service, url, options);
+async function curlJson(service, url) {
+  const text = await curlText(service, url);
   if (!text) return null;
   return JSON.parse(text);
 }
 
-async function curlText(service, url, { method = "GET", body } = {}) {
+async function curlText(service, url) {
   requireConfiguredService(service);
   const args = [
     "-sS",
@@ -193,16 +108,12 @@ async function curlText(service, url, { method = "GET", body } = {}) {
     "-w",
     "\n%{http_code}",
     "-X",
-    method,
+    "GET",
     "-H",
     `X-Api-Key: ${service.apiKey}`,
     "-H",
     "accept: application/json",
   ];
-
-  if (body !== undefined) {
-    args.push("-H", "content-type: application/json", "--data", JSON.stringify(body));
-  }
 
   args.push(url);
 
@@ -496,7 +407,9 @@ async function handleSettings(req, res) {
   }
 
   if (req.method === "PUT" && !action) {
-    const serviceSettings = normalizeServiceSettings(body, settings[serviceName]);
+    const serviceSettings = normalizeServiceSettings(body, settings[serviceName], {
+      optional: serviceName === "jellyfin",
+    });
     const nextSettings = { ...settings, [serviceName]: serviceSettings };
     await saveSettings(config.settingsFile, nextSettings);
     settings = nextSettings;
@@ -571,7 +484,7 @@ async function handleCollectionAction(req, res) {
 
   if (req.method === "DELETE" && deleteMatch) {
     const deleted = await deleteCollection(deleteMatch[1]);
-    jsonResponse(res, 200, { deleted });
+    jsonResponse(res, deleted.failure ? 207 : 200, { deleted });
     return;
   }
 

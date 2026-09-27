@@ -439,7 +439,7 @@ function openCollectionDetail(card, collection) {
     <section class="detail-facts" aria-label="Collection details"></section>
     <section class="detail-actions">
       <button class="toggle-collection-monitor-button" type="button"></button>
-      <button class="delete-collection-button" type="button">Delete collection</button>
+      <button class="delete-collection-button" type="button">Delete movies</button>
     </section>
     <section class="detail-section">
       <div class="detail-section-heading"><h3>Movies</h3><span class="detail-movie-count"></span></div>
@@ -460,6 +460,9 @@ function openCollectionDetail(card, collection) {
   const monitorButton = detailContent.querySelector(".toggle-collection-monitor-button");
   monitorButton.dataset.monitored = collection.monitored;
   monitorButton.textContent = collection.monitored ? "Unmonitor" : "Monitor";
+  const deleteMoviesButton = detailContent.querySelector(".delete-collection-button");
+  deleteMoviesButton.disabled = collection.existingMovieCount === 0;
+  if (deleteMoviesButton.disabled) deleteMoviesButton.textContent = "No movies to delete";
   detailContent.querySelector(".detail-movie-count").textContent = `${collection.movieCount} total`;
   detailContent
     .querySelector(".collection-movies")
@@ -901,7 +904,8 @@ async function setCollectionMonitoring(card) {
 
 async function deleteCollection(card) {
   const button = card.querySelector(".delete-collection-button");
-  const message = `“${card.dataset.title}” and ${card.dataset.existingMovieCount} existing movie(s) (${formatBytes(Number(card.dataset.sizeOnDisk || 0))}) will be deleted from Radarr and disk.`;
+  const title = card.dataset.title;
+  const message = `The collection “${title}” will remain in Radarr but will be unmonitored. Its ${card.dataset.existingMovieCount} existing movie(s) (${formatBytes(Number(card.dataset.sizeOnDisk || 0))}) will be deleted from Radarr and disk.`;
   if (!confirmDestructiveAction(button, message)) return;
 
   button.disabled = true;
@@ -915,15 +919,24 @@ async function deleteCollection(card) {
     const data = await readJsonResponse(response);
 
     if (!response.ok) {
-      throw new Error(data.error || "Could not delete the collection");
+      throw new Error(data.error || "Could not delete the collection movies");
     }
 
     await loadLibrary();
+    if (data.deleted?.failure) {
+      const { deletedMovies, totalMovies, failure } = data.deleted;
+      const notAttempted = totalMovies - deletedMovies - 1;
+      renderErrors([{
+        source: "Radarr",
+        message: `${deletedMovies} of ${totalMovies} movie(s) confirmed deleted from “${title}”. Could not confirm deletion of “${failure.title}”: ${failure.message}${notAttempted ? ` ${notAttempted} remaining movie(s) were not attempted.` : ""} Check Radarr before retrying.`,
+      }]);
+      errorPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
   } catch (error) {
     renderErrors([{ source: "Cleanerr", message: error.message }]);
     button.disabled = false;
     button.classList.remove("is-busy");
-    button.textContent = "Delete collection";
+    button.textContent = "Delete movies";
   }
 }
 

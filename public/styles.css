@@ -472,6 +472,13 @@ button.is-busy:disabled {
   background: #b3261e;
 }
 
+.delete-collection-button:disabled {
+  border-color: var(--border);
+  background: #292e33;
+  color: var(--muted);
+  opacity: 1;
+}
+
 .collection-movies {
   border-top: 1px solid var(--border);
   background: var(--surface-soft);
