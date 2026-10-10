@@ -1,7 +1,6 @@
 services:
   cleanerr:
-    build: .
-    image: ${IMAGE:-cleanerr:latest}
+    image: ghcr.io/aitorperezzz/cleanerr:latest
     restart: unless-stopped
     container_name: cleanerr
     ports:

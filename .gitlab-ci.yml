@@ -8,15 +8,26 @@ variables:
   REGISTRY_TLS_VERIFY: "false"
   IMAGE_TAG: "$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA"
   IMAGE_LATEST: "$CI_REGISTRY_IMAGE:latest"
+  GHCR_USER: "aitorperezzz"
+  GHCR_IMAGE: "ghcr.io/aitorperezzz/cleanerr"
 
 build-image:
   stage: build
   image: quay.io/buildah/stable:latest
   rules:
-    - if: '$CI_COMMIT_BRANCH == "main"'
+    - if: '$CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH'
   before_script:
-    - buildah --storage-driver "$STORAGE_DRIVER" login --tls-verify="$REGISTRY_TLS_VERIFY" --username "$CI_REGISTRY_USER" --password "$CI_REGISTRY_PASSWORD" "$CI_REGISTRY"
+    - printf '%s' "$CI_REGISTRY_PASSWORD" | buildah --storage-driver "$STORAGE_DRIVER" login --tls-verify="$REGISTRY_TLS_VERIFY" --username "$CI_REGISTRY_USER" --password-stdin "$CI_REGISTRY"
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        : "${GHCR_TOKEN:?Set GHCR_TOKEN in GitLab CI/CD variables before publishing to GHCR}"
+        printf '%s' "$GHCR_TOKEN" | buildah --storage-driver "$STORAGE_DRIVER" login --tls-verify=true --username "$GHCR_USER" --password-stdin ghcr.io
+      fi
   script:
-    - buildah --storage-driver "$STORAGE_DRIVER" build --isolation "$BUILDAH_ISOLATION" --tag "$IMAGE_TAG" --tag "$IMAGE_LATEST" .
+    - buildah --storage-driver "$STORAGE_DRIVER" build --isolation "$BUILDAH_ISOLATION" --tag "$IMAGE_TAG" .
     - buildah --storage-driver "$STORAGE_DRIVER" push --tls-verify="$REGISTRY_TLS_VERIFY" "$IMAGE_TAG"
-    - buildah --storage-driver "$STORAGE_DRIVER" push --tls-verify="$REGISTRY_TLS_VERIFY" "$IMAGE_LATEST"
+    - buildah --storage-driver "$STORAGE_DRIVER" push --tls-verify="$REGISTRY_TLS_VERIFY" "$IMAGE_TAG" "docker://$IMAGE_LATEST"
+    - |
+      if [ "$CI_COMMIT_BRANCH" = "$CI_DEFAULT_BRANCH" ]; then
+        buildah --storage-driver "$STORAGE_DRIVER" push --tls-verify=true "$IMAGE_TAG" "docker://$GHCR_IMAGE:latest"
+      fi

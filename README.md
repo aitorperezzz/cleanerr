@@ -8,120 +8,67 @@ collections by size and perform monitoring or deletion actions from one place.
 > Some actions delete media files from disk through Radarr or Sonarr. Review
 > every confirmation carefully. Cleanerr does not provide an undo function.
 
-## Requirements
+## How it works
 
-- Node.js 26
-- A reachable Radarr instance
-- A reachable Sonarr instance
-- API keys with permission to read and modify those instances
-- `curl` is recommended as a fallback for library reads when Node.js cannot complete a request
+Configure the URLs and API keys for your Radarr and Sonarr instances in
+Settings. Each service has separate **Test connection** and **Save** actions.
+Leave an API key field empty to keep the saved value. Jellyfin is optional;
+when configured, Cleanerr asks it to refresh its library after deleting media.
 
-## Installation
+Browse movies, series, seasons and collections, sort them by size, and review
+monitoring or deletion actions before confirming. Failed writes are not
+automatically retried: check Radarr or Sonarr before repeating an action.
+Deleting a collection's movies removes its movies and files and unmonitors the
+collection; the collection itself remains in Radarr.
+
+## Docker Compose
+
+Copy or download [docker-compose.yml](docker-compose.yml) into a directory.
+It uses the published image `ghcr.io/aitorperezzz/cleanerr:latest`.
+From that directory, start the app or update it to the latest published image:
 
 ```sh
-npm install
+docker compose up -d --pull always
+```
+
+Open <http://localhost:3050>. A new installation opens Settings to configure
+your services. Radarr and Sonarr must be reachable from the container.
+Change the left side of `3050:3050` to use a different host port.
+You only need the Compose file; cloning the repository is optional.
+
+Settings persist in the `cleanerr-data` volume at `/data/config.json`.
+Service URLs and API keys are created at runtime and are never stored in the
+image. Anyone who can access Settings can replace the service configuration,
+so place Cleanerr behind the same access controls as your media services.
+Do not commit settings or expose API keys in screenshots or logs.
+
+Stop the app with `docker compose down`; the settings volume is preserved.
+
+## Run locally
+
+With Node.js 26 and npm installed, clone the repository and run:
+
+```sh
+npm ci
 npm start
 ```
 
-Open <http://localhost:3050>. A new installation opens Settings, where each
-service can be configured and tested independently.
+Open <http://localhost:3050>. Local settings are stored in `data/config.json`,
+which is excluded from Git and the Docker build context. Installing `curl`
+is recommended as a fallback when Node.js cannot complete library reads.
+The server listens on `0.0.0.0:3050`, as defined in [config.json](config.json).
 
-## Configuration
+Run `npm test` to check the code. Tests use fake service responses and do not
+connect to real Radarr, Sonarr or Jellyfin instances.
 
-The Settings page can store these six values:
+## GitLab CI/CD
 
-- Radarr URL and API key
-- Sonarr URL and API key
-- Jellyfin URL and API key (optional)
+Every branch push builds with Buildah and publishes the commit SHA and `latest`
+to the local GitLab registry. Only pushes to the default branch (`main` or
+`master`) also publish `ghcr.io/aitorperezzz/cleanerr:latest`. Tag pushes and
+merge request pipelines do not publish images.
 
-Every service has separate **Test connection** and **Save** actions. Saved API
-keys are never sent back to the browser; leave the API key field empty to keep
-the existing value. Radarr and Sonarr are required; Jellyfin is optional. When
-Jellyfin is configured, Cleanerr asks it to refresh its library after deleting
-media through Radarr or Sonarr. Closely timed deletes are grouped into a single
-refresh, and a Jellyfin error does not change the result of a deletion that
-already completed. Leave Jellyfin's URL empty and save to disable it.
-
-Writes to Radarr and Sonarr are not automatically retried after a connection
-error or timeout: the service may already have completed the action. Check the
-service before repeating it. Deleting a collection's movies unmonitors the
-collection and removes its existing movies and files, but the collection itself
-remains in Radarr. If a movie deletion cannot be confirmed, Cleanerr stops and
-reports how many earlier deletions were confirmed.
-
-During local development, settings are written to `data/config.json`. The
-Docker image sets `NODE_ENV=production`, which changes the location to
-`/data/config.json` so the complete `/data` directory can be mounted as a
-persistent volume. `CLEANERR_DATA_DIR` can optionally override the directory in
-unusual deployments; normal local and Docker usage does not need it.
-
-The web server always listens on `0.0.0.0:3050`. These internal values live in
-the committed application [config.json](config.json), not in the Settings page.
-Developers can temporarily edit that file locally if necessary.
-
-## Docker
-
-Build and run the container with Docker Compose:
-
-```sh
-docker compose up --build -d
-```
-
-Compose publishes Cleanerr at <http://localhost:3050> and keeps its settings in
-the `cleanerr-data` volume. To expose a different host port, change only the
-left side of the mapping, for example `8080:3050`.
-
-To use an image from a registry instead of building locally:
-
-```sh
-IMAGE=registry.example.com/group/cleanerr:latest docker compose up -d
-```
-
-Service URLs and API keys are created at runtime in `/data/config.json`; they
-are never stored in the image.
-
-## GitLab CI
-
-The GitLab pipeline follows the Buildah-based setup used by the Minesweeper
-project. A commit on `main` builds the image and pushes both of these tags to
-the GitLab Container Registry:
-
-- `$CI_REGISTRY_IMAGE:$CI_COMMIT_SHORT_SHA`
-- `$CI_REGISTRY_IMAGE:latest`
-
-The pipeline uses GitLab's predefined registry variables, so no Radarr or
-Sonarr credentials are needed during the image build. Runtime configuration
-is entered through Settings after the container is deployed.
-
-## Security
-
-The runtime `data/` directory is excluded from Git and from the Docker build
-context. Do not commit `/data/config.json` or expose API keys in screenshots,
-logs, issues, or pull requests. Anyone who can access Settings can replace the
-service configuration, so place Cleanerr behind the same access controls used
-for the rest of your media services.
-
-## Development
-
-The server uses Node.js without a build step and serves the files in `public/`.
-After changing server-side code, restart `npm start`. Browser assets can be
-refreshed directly. The same Node.js major version is used for local development
-and the container image.
-
-Run the automated test suite with:
-
-```sh
-npm test
-```
-
-The tests use Node.js's built-in test runner and do not connect to real Radarr,
-Sonarr, or Jellyfin instances. Service calls are replaced with in-memory fakes,
-including destructive operations.
-
-The main modules are organized as follows:
-
-- `server.js` contains HTTP routing and service transport.
-- `library-actions.js` contains monitoring and deletion workflows.
-- `radarr-snapshot.js` coalesces concurrent Radarr library reads.
-- `settings-store.js` validates and persists runtime configuration.
-- `public/library-utils.js` contains reusable formatting, search, and sorting logic.
+Set `GHCR_TOKEN` as a masked and hidden GitLab CI/CD variable, with expansion
+disabled, using a GitHub classic token with `write:packages`. If the variable
+is protected, protect the default branch too. After the first publication,
+set the GitHub package to **Public** to allow pulls without authentication.
