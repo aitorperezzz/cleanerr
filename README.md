@@ -67,10 +67,14 @@ connect to real Radarr, Sonarr or Jellyfin instances.
 
 ## GitLab CI/CD
 
-Every branch push builds with Buildah and publishes the commit SHA and `latest`
-to the local GitLab registry. Only pushes to the default branch (`main` or
-`master`) also publish `ghcr.io/aitorperezzz/cleanerr:latest`. Tag pushes and
-merge request pipelines do not publish images.
+Branch pushes and merge request pipelines run `npm ci` and `npm test` using
+Node.js 26 on Alpine, matching the application image. A failed test blocks the
+build and publication stages.
+
+After the tests pass, every branch push builds with Buildah and publishes the
+commit SHA and `latest` to the local GitLab registry. Only pushes to the default
+branch (`main` or `master`) also publish `ghcr.io/aitorperezzz/cleanerr:latest`.
+Merge request pipelines run tests only. Tag pushes do not publish images.
 
 Set `GHCR_TOKEN` as a masked and hidden GitLab CI/CD variable, with expansion
 disabled, using a GitHub classic token with `write:packages`. If the variable
