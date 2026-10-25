@@ -1,6 +1,18 @@
+import { createOperationQueue } from "./operation-queue.js";
+
+const runOperation = createOperationQueue();
+
 function httpError(message, status) {
   const error = new Error(message);
   error.status = status;
+  return error;
+}
+
+function partialActionError(message, partialResult, cause) {
+  const error = new Error(`${message} ${cause.message}`, { cause });
+  error.status = cause.status || 502;
+  error.partialResult = partialResult;
+  error.uncertain = Boolean(cause.uncertain);
   return error;
 }
 
@@ -44,7 +56,7 @@ export function createLibraryActions({
       : "addImportListExclusion";
     const url = new URL(`${targetService.url}/api/v3/${endpoint}/${numericId}`);
     url.searchParams.set("deleteFiles", "true");
-    url.searchParams.set(exclusionParam, "true");
+    url.searchParams.set(exclusionParam, serviceName === "radarr" ? "false" : "true");
     await deleteEndpoint(targetService, url);
     return { source: targetService.label, id: numericId };
   }
@@ -81,9 +93,24 @@ export function createLibraryActions({
         size: bytesToNumber(episode.episodeFile?.size),
       }));
     const uniqueEpisodeFiles = [...new Map(episodeFiles.map((file) => [file.id, file])).values()];
+    let deletedFiles = 0;
+    let deletedSize = 0;
     if (uniqueEpisodeFiles.length > 0) {
       try {
-        for (const episodeFile of uniqueEpisodeFiles) await deleteEpisodeFile(episodeFile.id);
+        for (const episodeFile of uniqueEpisodeFiles) {
+          await deleteEpisodeFile(episodeFile.id);
+          deletedFiles += 1;
+          deletedSize += episodeFile.size;
+        }
+      } catch (cause) {
+        throw partialActionError(
+          `The season was unmonitored. ${deletedFiles} of ${uniqueEpisodeFiles.length} episode files confirmed deleted. Check Sonarr before retrying.`,
+          { source: "Sonarr", seriesId: numericSeriesId, seasonNumber: numericSeasonNumber, monitored: false,
+            deletedFiles, totalFiles: uniqueEpisodeFiles.length, deletedSize,
+            failedFileId: uniqueEpisodeFiles[deletedFiles].id,
+            notAttemptedFiles: uniqueEpisodeFiles.length - deletedFiles - 1 },
+          cause,
+        );
       } finally {
         await refreshJellyfinLibrary();
       }
@@ -118,11 +145,16 @@ export function createLibraryActions({
     season.monitored = monitored;
     const updatedSeries = await sendJson(sonarr, `series/${numericSeriesId}`, "PUT", series);
     if (monitored) {
-      await sendJson(sonarr, "command", "POST", {
-        name: "SeasonSearch",
-        seriesId: numericSeriesId,
-        seasonNumber: numericSeasonNumber,
-      });
+      try {
+        await sendJson(sonarr, "command", "POST", {
+          name: "SeasonSearch",
+          seriesId: numericSeriesId,
+          seasonNumber: numericSeasonNumber,
+        });
+      } catch (cause) {
+        throw partialActionError("Season monitoring was enabled, but the search request could not be confirmed. Check Sonarr before starting another search.",
+          { source: "Sonarr", seriesId: numericSeriesId, seasonNumber: numericSeasonNumber, monitored: true, commandConfirmed: false }, cause);
+      }
     }
     return updatedSeries;
   }
@@ -132,7 +164,20 @@ export function createLibraryActions({
     const radarr = service("radarr");
     const collection = await fetchJson(radarr, `collection/${numericId}`);
     collection.monitored = monitored;
-    return sendJson(radarr, `collection/${numericId}`, "PUT", collection);
+    if (monitored) collection.searchOnAdd = true;
+    const updatedCollection = await sendJson(radarr, `collection/${numericId}`, "PUT", collection);
+    if (monitored) {
+      try {
+        await sendJson(radarr, "command", "POST", {
+          name: "RefreshCollections",
+          collectionIds: [numericId],
+        });
+      } catch (cause) {
+        throw partialActionError("Collection monitoring was enabled, but the sync request could not be confirmed. Check Radarr before starting another sync.",
+          { source: "Radarr", collectionId: numericId, monitored: true, searchOnAdd: true, commandConfirmed: false }, cause);
+      }
+    }
+    return updatedCollection;
   }
 
   async function deleteCollection(collectionId) {
@@ -176,6 +221,7 @@ export function createLibraryActions({
     return {
       source: "Radarr",
       id: numericId,
+      unmonitoredCollection: true,
       totalMovies: moviesToDelete.length,
       deletedMovies,
       failure,
@@ -197,8 +243,15 @@ export function createLibraryActions({
       collection.monitored = false;
       await sendJson(radarr, `collection/${collection.id}`, "PUT", collection);
     }
-    await deleteFromServiceWithoutRefresh("radarr", numericMovieId);
-    await refreshJellyfinLibrary();
+    try {
+      await deleteFromServiceWithoutRefresh("radarr", numericMovieId);
+    } catch (cause) {
+      if (!collection) throw cause;
+      throw partialActionError("The collection was unmonitored, but movie deletion could not be confirmed. Check Radarr before retrying.",
+        { source: "Radarr", id: numericMovieId, collectionId: collection.id, unmonitoredCollection: true, deletionConfirmed: false }, cause);
+    } finally {
+      await refreshJellyfinLibrary();
+    }
 
     return {
       source: "Radarr",
@@ -209,13 +262,20 @@ export function createLibraryActions({
     };
   }
 
+  function serialized(serviceName, seriesId, operation) {
+    const target = service(serviceName);
+    // Radarr operations can affect both a movie and its collection.
+    const resource = serviceName === "sonarr" ? `series:${Number(seriesId)}` : "collections-and-movies";
+    return runOperation(`${serviceName}:${target?.url}:${resource}`, operation);
+  }
+
   return {
-    deleteCollection,
-    deleteFromService,
-    removeSeason,
-    setCollectionMonitoring,
-    setSeasonMonitoring,
-    setSeriesMonitoring,
-    unmonitorCollectionAndDeleteMovie,
+    deleteCollection: (id) => serialized("radarr", null, () => deleteCollection(id)),
+    deleteFromService: (name, id) => serialized(name, id, () => deleteFromService(name, id)),
+    removeSeason: (id, season) => serialized("sonarr", id, () => removeSeason(id, season)),
+    setCollectionMonitoring: (id, monitored) => serialized("radarr", null, () => setCollectionMonitoring(id, monitored)),
+    setSeasonMonitoring: (id, season, monitored) => serialized("sonarr", id, () => setSeasonMonitoring(id, season, monitored)),
+    setSeriesMonitoring: (id, monitored) => serialized("sonarr", id, () => setSeriesMonitoring(id, monitored)),
+    unmonitorCollectionAndDeleteMovie: (id) => serialized("radarr", null, () => unmonitorCollectionAndDeleteMovie(id)),
   };
 }

@@ -1,3 +1,5 @@
+import { sendLibraryAction, refreshAfterActionError } from "./library-action-client.js";
+import { loadLibrarySnapshot } from "./library-loader.js";
 import {
   formatBytes,
   formatDate,
@@ -44,6 +46,8 @@ let activeQuery = "";
 let lastUpdatedAt = "";
 let searchRenderTimer = null;
 let libraryRevision = 0;
+let configurationRevision = "";
+let libraryLoadGeneration = 0;
 let renderedGridKey = null;
 let detailTrigger = null;
 
@@ -281,6 +285,7 @@ function createSeasonItem(season, series, title) {
   const label = season.seasonNumber === 0 ? "Specials" : `Season ${season.seasonNumber}`;
   const episodes = `${season.episodeFileCount}/${season.totalEpisodeCount} episodes`;
   const hasFiles = season.episodeFileCount > 0 || season.sizeOnDisk > 0;
+  const isMonitored = Boolean(season.monitored && series.monitored);
   seasonItem.dataset.seriesId = series.id;
   seasonItem.dataset.seriesTitle = title;
   seasonItem.dataset.seasonNumber = season.seasonNumber;
@@ -288,7 +293,7 @@ function createSeasonItem(season, series, title) {
   seasonItem.dataset.hasFiles = hasFiles;
   seasonItem.classList.toggle(
     "is-unmonitored-missing",
-    (!season.monitored || !series.monitored) && !hasFiles,
+    !isMonitored && !hasFiles,
   );
   seasonItem.innerHTML = `
     <span class="season-name"></span>
@@ -300,15 +305,14 @@ function createSeasonItem(season, series, title) {
   const episodeCount = seasonItem.querySelector(".season-episodes");
   episodeCount.textContent = episodes;
   episodeCount.dataset.short = `${season.episodeFileCount}/${season.totalEpisodeCount}`;
-  episodeCount.setAttribute("aria-label", episodes);
+  episodeCount.dataset.monitored = String(isMonitored);
+  const availabilityHint = isMonitored ? "Checking air dates..." : "Not monitored.";
+  episodeCount.setAttribute("aria-label", `${episodes}. ${availabilityHint}`);
+  episodeCount.title = availabilityHint;
   seasonItem.querySelector(".season-size").textContent = formatBytes(season.sizeOnDisk);
   const actionButton = seasonItem.querySelector(".season-action-button");
 
-  if (!series.monitored) {
-    actionButton.classList.add("season-series-unmonitored-button");
-    actionButton.textContent = "Series not monitored";
-    actionButton.disabled = true;
-  } else if (!season.monitored) {
+  if (!isMonitored && !hasFiles) {
     actionButton.classList.add("monitor-season-button");
     actionButton.textContent = "Monitor";
   } else {
@@ -317,6 +321,48 @@ function createSeasonItem(season, series, title) {
   }
 
   return seasonItem;
+}
+
+function renderSeasonAvailability(counter, status) {
+  const isMonitored = counter.dataset.monitored === "true";
+  counter.classList.toggle("is-up-to-date", isMonitored && status?.state === "up-to-date");
+  counter.classList.toggle("is-missing", isMonitored && status?.state === "missing");
+  let description = "Episode air dates are unavailable.";
+  if (status) {
+    const episodes = `${status.episodeFileCount}/${status.totalEpisodeCount}`;
+    counter.textContent = `${episodes} episodes`;
+    counter.dataset.short = episodes;
+    if (status.state === "missing") {
+      description = `${status.missingEpisodeCount} aired episode(s) missing.`;
+    } else if (status.state === "up-to-date") {
+      description = status.episodeFileCount === status.totalEpisodeCount
+        ? "All episodes downloaded." : "Up to date. Remaining episodes have not aired yet.";
+    } else if (status.state === "upcoming") {
+      description = "No episodes have aired yet.";
+    } else {
+      description = `Air dates are unknown for ${status.unknownDateCount} undownloaded episode(s).`;
+    }
+  }
+  if (!isMonitored) description = "Not monitored.";
+  counter.title = description;
+  counter.setAttribute("aria-label", `${counter.dataset.short} episodes. ${description}`);
+}
+
+async function loadSeasonAvailability(seasonList, seriesId) {
+  const revision = configurationRevision;
+  const counters = [...seasonList.querySelectorAll(".season-item")];
+  try {
+    const response = await fetch(`/api/library/sonarr/${seriesId}/season-availability`, { cache: "no-store" });
+    const data = await readJsonResponse(response);
+    if (!response.ok) throw new Error(data.error || "Could not check air dates");
+    if (revision !== configurationRevision || data.configurationRevision !== revision) return;
+    const bySeason = new Map(data.seasons.map(season => [season.seasonNumber, season]));
+    for (const row of counters) {
+      renderSeasonAvailability(row.querySelector(".season-episodes"), bySeason.get(Number(row.dataset.seasonNumber)));
+    }
+  } catch {
+    for (const row of counters) renderSeasonAvailability(row.querySelector(".season-episodes"), null);
+  }
 }
 
 function createCollectionMovie(movie) {
@@ -440,6 +486,7 @@ function openMediaDetail(card, item) {
     );
     section.append(heading, seasonList);
     detailContent.append(section);
+    loadSeasonAvailability(seasonList, item.id);
   }
   prepareDetailPanel(card?.querySelector(".media-card-button") || null);
 }
@@ -812,6 +859,31 @@ function renderView() {
   emptyState.hidden = hasItems;
 }
 
+async function fetchLibraryAction(url, options) {
+  return sendLibraryAction(url, options, { configurationRevision, fetchImpl: fetch, readResponse: readJsonResponse });
+}
+
+async function reportLibraryActionError(error) {
+  await refreshAfterActionError(error, { reload: loadLibrary, render: renderErrors });
+  errorPanel.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function invalidateLibrary() {
+  libraryLoadGeneration += 1;
+  loadingState.hidden = true;
+  refreshButton.disabled = false;
+  refreshButton.classList.remove("is-busy");
+  configurationRevision = "";
+  libraryItems = [];
+  collectionItems = [];
+  libraryRevision += 1;
+  clearViewRenderCache();
+  closeDetail({ restoreFocus: false });
+  lastUpdatedAt = "";
+  updatedAt.textContent = "-";
+  updatedAt.removeAttribute("title");
+}
+
 async function deleteItem(row) {
   const isCollectionMovie =
     row.dataset.service === "radarr" &&
@@ -832,7 +904,7 @@ async function deleteItem(row) {
     const endpoint = isCollectionMovie
       ? `/api/library/radarr/${row.dataset.id}/collection-safe`
       : `/api/library/${row.dataset.service}/${row.dataset.id}`;
-    const response = await fetch(endpoint, { method: "DELETE" });
+    const response = await fetchLibraryAction(endpoint, { method: "DELETE" });
     const data = await readJsonResponse(response);
 
     if (!response.ok) {
@@ -841,7 +913,7 @@ async function deleteItem(row) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Delete";
@@ -859,7 +931,7 @@ async function monitorSeries(row) {
   button.textContent = "Updating...";
 
   try {
-    const response = await fetch(`/api/library/sonarr/${row.dataset.id}/monitor`, {
+    const response = await fetchLibraryAction(`/api/library/sonarr/${row.dataset.id}/monitor`, {
       method: "PATCH",
     });
     const data = await readJsonResponse(response);
@@ -870,7 +942,7 @@ async function monitorSeries(row) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Monitor";
@@ -890,7 +962,7 @@ async function removeSeason(seasonItem) {
   button.textContent = "Removing...";
 
   try {
-    const response = await fetch(
+    const response = await fetchLibraryAction(
       `/api/library/sonarr/${seasonItem.dataset.seriesId}/seasons/${seasonItem.dataset.seasonNumber}`,
       { method: "DELETE" },
     );
@@ -902,7 +974,7 @@ async function removeSeason(seasonItem) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Delete";
@@ -921,7 +993,7 @@ async function monitorSeason(seasonItem) {
   button.textContent = "Starting search...";
 
   try {
-    const response = await fetch(
+    const response = await fetchLibraryAction(
       `/api/library/sonarr/${seasonItem.dataset.seriesId}/seasons/${seasonItem.dataset.seasonNumber}/monitor`,
       { method: "PATCH" },
     );
@@ -933,7 +1005,7 @@ async function monitorSeason(seasonItem) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Monitor";
@@ -945,7 +1017,7 @@ async function setCollectionMonitoring(card) {
   const button = card.querySelector(".toggle-collection-monitor-button");
   const shouldMonitor = button.dataset.monitored !== "true";
   const message = shouldMonitor
-    ? `“${title}” will be monitored in Radarr.`
+    ? `“${title}” will be monitored and synced in Radarr. Missing movies will be added and searched now.`
     : `Radarr will stop monitoring “${title}”.`;
   if (!confirmAction(button, message)) return;
 
@@ -955,18 +1027,18 @@ async function setCollectionMonitoring(card) {
 
   try {
     const action = shouldMonitor ? "monitor" : "unmonitor";
-    const response = await fetch(`/api/collections/${card.dataset.id}/${action}`, {
+    const response = await fetchLibraryAction(`/api/collections/${card.dataset.id}/${action}`, {
       method: "PATCH",
     });
     const data = await readJsonResponse(response);
 
     if (!response.ok) {
-      throw new Error(data.error || "Could not unmonitor the collection");
+      throw new Error(data.error || (shouldMonitor ? "Could not monitor and sync the collection" : "Could not unmonitor the collection"));
     }
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = shouldMonitor ? "Monitor" : "Unmonitor";
@@ -984,7 +1056,7 @@ async function deleteCollection(card) {
   button.textContent = "Deleting...";
 
   try {
-    const response = await fetch(`/api/collections/${card.dataset.id}`, {
+    const response = await fetchLibraryAction(`/api/collections/${card.dataset.id}`, {
       method: "DELETE",
     });
     const data = await readJsonResponse(response);
@@ -993,18 +1065,18 @@ async function deleteCollection(card) {
       throw new Error(data.error || "Could not delete the collection movies");
     }
 
-    await loadLibrary();
+    const refreshed = await loadLibrary();
     if (data.deleted?.failure) {
       const { deletedMovies, totalMovies, failure } = data.deleted;
       const notAttempted = totalMovies - deletedMovies - 1;
-      renderErrors([{
+      renderErrors([...(refreshed?.errors || []), {
         source: "Radarr",
-        message: `${deletedMovies} of ${totalMovies} movie(s) confirmed deleted from “${title}”. Could not confirm deletion of “${failure.title}”: ${failure.message}${notAttempted ? ` ${notAttempted} remaining movie(s) were not attempted.` : ""} Check Radarr before retrying.`,
+        message: `The collection was unmonitored. ${deletedMovies} of ${totalMovies} movie(s) confirmed deleted from “${title}”. Could not confirm deletion of “${failure.title}”: ${failure.message}${notAttempted ? ` ${notAttempted} remaining movie(s) were not attempted.` : ""} Check Radarr before retrying.`,
       }]);
       errorPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Delete movies";
@@ -1044,7 +1116,7 @@ async function testConnection(form) {
   try {
     const response = await fetch(`/api/settings/${form.dataset.service}/test`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Cleanerr-Request": "1" },
       body: JSON.stringify(formPayload(form)),
     });
     const data = await readJsonResponse(response);
@@ -1070,11 +1142,12 @@ async function saveServiceSettings(form) {
   try {
     const response = await fetch(`/api/settings/${form.dataset.service}`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Cleanerr-Request": "1" },
       body: JSON.stringify(formPayload(form)),
     });
     const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || "Could not save settings");
+    invalidateLibrary();
     settingsState.services[form.dataset.service] = data.service;
     settingsState.complete = data.complete;
     renderServiceSettings(form, data.service);
@@ -1093,6 +1166,7 @@ async function saveServiceSettings(form) {
 }
 
 async function loadLibrary() {
+  const generation = ++libraryLoadGeneration;
   if (!detailPanel.hidden && new URLSearchParams(window.location.search).has("detail")) {
     if (window.history.state?.detailEntry) window.history.back();
     else window.history.replaceState({}, "", viewPaths[activeView]);
@@ -1105,40 +1179,34 @@ async function loadLibrary() {
   mediaGrid.hidden = true;
 
   try {
-    const refresh = Date.now();
-    const [libraryResponse, collectionsResponse] = await Promise.all([
-      fetch(`/api/library?refresh=${refresh}`, { cache: "no-store" }),
-      fetch(`/api/collections?refresh=${refresh}`, { cache: "no-store" }),
-    ]);
-    const data = await readJsonResponse(libraryResponse);
-    const collectionsData = await readJsonResponse(collectionsResponse);
-
-    if (!libraryResponse.ok && libraryResponse.status !== 207) {
-      throw new Error(data.error || "Could not load the library");
-    }
-    if (!collectionsResponse.ok) {
-      throw new Error(collectionsData.error || "Could not load collections");
-    }
-
-    libraryItems = data.items || [];
-    collectionItems = collectionsData.collections || [];
+    const data = await loadLibrarySnapshot({ fetchImpl: fetch, readResponse: readJsonResponse });
+    if (generation !== libraryLoadGeneration) return;
+    configurationRevision = data.configurationRevision;
+    libraryItems = data.items;
+    collectionItems = data.collections;
     libraryRevision += 1;
     clearViewRenderCache();
-    lastUpdatedAt = data.updatedAt || collectionsData.updatedAt;
+    lastUpdatedAt = data.updatedAt;
     renderUpdatedAt();
-    renderErrors([...(data.errors || []), ...(collectionsData.errors || [])]);
+    renderErrors(data.errors);
     renderView();
+    return data;
   } catch (error) {
+    if (generation !== libraryLoadGeneration) return;
+    configurationRevision = "";
     libraryItems = [];
     collectionItems = [];
     libraryRevision += 1;
     clearViewRenderCache();
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    const errors = [{ source: "Cleanerr", message: error.message }];
+    renderErrors(errors);
     lastUpdatedAt = "";
     updatedAt.textContent = "-";
     updatedAt.removeAttribute("title");
     emptyState.hidden = false;
+    return { errors };
   } finally {
+    if (generation !== libraryLoadGeneration) return;
     loadingState.hidden = true;
     refreshButton.disabled = false;
     refreshButton.classList.remove("is-busy");

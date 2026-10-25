@@ -29,7 +29,7 @@ function setup({ responses = {}, deleteEndpoint } = {}) {
   return { actions, calls };
 }
 
-test("movie deletion removes files and adds a Radarr import exclusion", async () => {
+test("movie deletion removes files without adding a Radarr import exclusion", async () => {
   const { actions, calls } = setup();
   const result = await actions.deleteFromService("radarr", "42");
 
@@ -38,7 +38,7 @@ test("movie deletion removes files and adds a Radarr import exclusion", async ()
   const url = new URL(calls.delete[0].url);
   assert.equal(url.pathname, "/api/v3/movie/42");
   assert.equal(url.searchParams.get("deleteFiles"), "true");
-  assert.equal(url.searchParams.get("addImportExclusion"), "true");
+  assert.equal(url.searchParams.get("addImportExclusion"), "false");
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
@@ -120,6 +120,7 @@ test("collection-safe movie deletion unmonitors its collection first", async () 
   assert.equal(calls.send[0].endpoint, "collection/3");
   assert.equal(calls.send[0].body.monitored, false);
   assert.equal(new URL(calls.delete[0].url).pathname, "/api/v3/movie/8");
+  assert.equal(new URL(calls.delete[0].url).searchParams.get("addImportExclusion"), "false");
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
@@ -149,6 +150,7 @@ test("deleting a collection only deletes movies belonging to it", async () => {
     calls.delete.map((call) => new URL(call.url).pathname),
     ["/api/v3/movie/11", "/api/v3/movie/12"],
   );
+  assert.ok(calls.delete.every((call) => new URL(call.url).searchParams.get("addImportExclusion") === "false"));
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
@@ -204,7 +206,13 @@ test("a partial season deletion still refreshes Jellyfin", async () => {
     },
   });
 
-  await assert.rejects(actions.removeSeason(5, 1), { message: "Sonarr deletion failed" });
+  await assert.rejects(actions.removeSeason(5, 1), error => {
+    assert.match(error.message, /1 of 2 episode files confirmed deleted/);
+    assert.equal(error.partialResult.monitored, false);
+    assert.equal(error.partialResult.deletedFiles, 1);
+    assert.equal(error.partialResult.failedFileId, 11);
+    return true;
+  });
   assert.equal(deleteCount, 2);
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
@@ -231,13 +239,35 @@ test("monitoring a season also monitors its parent series and starts a season se
   });
 });
 
-test("monitoring and unmonitoring collections updates the requested state", async () => {
+test("monitoring a collection enables search on add and queues a refresh for that collection", async () => {
   const { actions, calls } = setup({
-    responses: { "Radarr:collection/6": { id: 6, monitored: false } },
+    responses: { "Radarr:collection/6": { id: 6, monitored: false, searchOnAdd: false, qualityProfileId: 3, rootFolderPath: "/movies" } },
   });
-  await actions.setCollectionMonitoring(6, true);
+  const result = await actions.setCollectionMonitoring(6, true);
   assert.equal(calls.send[0].endpoint, "collection/6");
   assert.equal(calls.send[0].body.monitored, true);
+  assert.equal(calls.send[0].body.searchOnAdd, true);
+  assert.equal(calls.send[0].body.qualityProfileId, 3);
+  assert.equal(calls.send[0].body.rootFolderPath, "/movies");
+  assert.deepEqual(calls.send[1], {
+    service: "Radarr",
+    endpoint: "command",
+    method: "POST",
+    body: { name: "RefreshCollections", collectionIds: [6] },
+  });
+  assert.equal(calls.send.length, 2);
+  assert.deepEqual(result, calls.send[0].body);
+});
+
+test("unmonitoring a collection preserves search settings and does not queue a refresh", async () => {
+  const { actions, calls } = setup({
+    responses: { "Radarr:collection/6": { id: 6, monitored: true, searchOnAdd: false } },
+  });
+  await actions.setCollectionMonitoring(6, false);
+  assert.equal(calls.send[0].endpoint, "collection/6");
+  assert.equal(calls.send[0].body.monitored, false);
+  assert.equal(calls.send[0].body.searchOnAdd, false);
+  assert.equal(calls.send.length, 1);
 });
 
 test("invalid identifiers are rejected before calling a service", async () => {
@@ -245,4 +275,84 @@ test("invalid identifiers are rejected before calling a service", async () => {
   await assert.rejects(actions.deleteFromService("radarr", 0), { message: "Invalid library item", status: 400 });
   await assert.rejects(actions.removeSeason(1, -1), { message: "Invalid season", status: 400 });
   assert.deepEqual(calls, { fetch: [], send: [], delete: [], jellyfinRefresh: [] });
+});
+
+test("concurrent actions from separate requests preserve both season updates", async () => {
+  let persisted = { id: 1, monitored: true, seasons: [{ seasonNumber: 1, monitored: false }, { seasonNumber: 2, monitored: false }] };
+  const makeActions = () => createLibraryActions({
+    getService: () => ({ url: "http://concurrent-sonarr" }),
+    fetchJson: async () => { const snapshot = structuredClone(persisted); await new Promise(resolve => setImmediate(resolve)); return snapshot; },
+    sendJson: async (_service, endpoint, _method, body) => { if (endpoint === "series/1") persisted = structuredClone(body); return body; },
+  });
+  await Promise.all([makeActions().setSeasonMonitoring(1, 1, true), makeActions().setSeasonMonitoring("1", 2, true)]);
+  assert.ok(persisted.seasons.every(season => season.monitored));
+});
+
+test("a failed series action does not block later actions on the same series", async () => {
+  let fetches = 0;
+  const actions = createLibraryActions({
+    getService: () => ({ url: "http://recovering-sonarr" }),
+    fetchJson: async () => { if (++fetches === 1) throw new Error("offline"); return { id: 1, monitored: false }; },
+    sendJson: async (_service, _endpoint, _method, body) => body,
+  });
+  const results = await Promise.allSettled([actions.setSeriesMonitoring(1, true), actions.setSeriesMonitoring(1, true)]);
+  assert.equal(results[0].status, "rejected");
+  assert.equal(results[1].value.monitored, true);
+});
+
+test("season monitoring remains confirmed when search submission fails", async () => {
+  const actions = createLibraryActions({
+    getService: () => ({ url: "http://partial-sonarr" }),
+    fetchJson: async () => ({ id: 1, seasons: [{ seasonNumber: 1, monitored: false }] }),
+    sendJson: async (_service, endpoint, _method, body) => {
+      if (endpoint === "command") throw new Error("search unavailable");
+      return body;
+    },
+  });
+  await assert.rejects(actions.setSeasonMonitoring(1, 1, true), error => {
+    assert.equal(error.partialResult.monitored, true);
+    assert.equal(error.partialResult.commandConfirmed, false);
+    assert.match(error.message, /monitoring was enabled/);
+    return true;
+  });
+});
+
+test("movie deletion failures report the collection that was already unmonitored", async () => {
+  const { actions, calls } = setup({
+    responses: {
+      "Radarr:movie/8": { id: 8, tmdbId: 80 },
+      "Radarr:collection": [{ id: 3, monitored: true, movies: [{ tmdbId: 80 }] }],
+    },
+    deleteEndpoint: async () => { throw new Error("deletion rejected"); },
+  });
+  await assert.rejects(actions.unmonitorCollectionAndDeleteMovie(8), error => {
+    assert.equal(error.partialResult.collectionId, 3);
+    assert.equal(error.partialResult.unmonitoredCollection, true);
+    assert.equal(error.partialResult.deletionConfirmed, false);
+    return true;
+  });
+  assert.equal(calls.jellyfinRefresh.length, 1);
+});
+
+test("retrying an unmonitored season deletion removes all remaining files without monitoring it", async () => {
+  const series = { id: 5, monitored: false, seasons: [{ seasonNumber: 1, monitored: false }] };
+  const files = new Set([10, 11, 12]);
+  let failOnce = true;
+  const { actions, calls } = setup({
+    responses: {
+      "Sonarr:series/5": () => structuredClone(series),
+      "Sonarr:episode?seriesId=5&includeEpisodeFile=true": () => [...files].map(id => ({ seasonNumber: 1, episodeFileId: id })),
+    },
+    deleteEndpoint: async (_service, url) => {
+      const id = Number(String(url).split("/").at(-1));
+      if (id === 11 && failOnce) { failOnce = false; throw new Error("temporary failure"); }
+      files.delete(id);
+    },
+  });
+  await assert.rejects(actions.removeSeason(5, 1), /1 of 3 episode files confirmed deleted/);
+  assert.deepEqual([...files], [11, 12]);
+  const result = await actions.removeSeason(5, 1);
+  assert.equal(result.deletedFiles, 2);
+  assert.equal(files.size, 0);
+  assert.ok(calls.send.every(call => call.endpoint === "series/5" && !call.body.monitored && !call.body.seasons[0].monitored));
 });

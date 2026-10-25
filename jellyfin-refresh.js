@@ -5,6 +5,7 @@ export async function requestJellyfinLibraryRefresh(
   if (!jellyfin?.url || !jellyfin.apiKey) return false;
 
   const response = await fetchImpl(`${jellyfin.url}/Library/Refresh`, {
+    redirect: "error",
     method: "POST",
     headers: {
       Authorization: `MediaBrowser Client="Cleanerr", Device="Cleanerr", DeviceId="cleanerr", Version="0.1.0", Token="${jellyfin.apiKey}"`,

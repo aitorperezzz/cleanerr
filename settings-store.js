@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export const serviceNames = ["radarr", "sonarr", "jellyfin"];
@@ -41,7 +42,13 @@ export function normalizeServiceSettings(input, current = {}, { optional = false
   if (optional && !enteredUrl) return { url: "", apiKey: "" };
 
   const url = normalizeUrl(enteredUrl);
-  const apiKey = String(input?.apiKey || current.apiKey || "").trim();
+  const enteredApiKey = String(input?.apiKey || "").trim();
+  if (!enteredApiKey && current.apiKey && (!current.url || url !== normalizeUrl(current.url))) {
+    const error = new Error("Enter an API key when changing the server URL.");
+    error.status = 400;
+    throw error;
+  }
+  const apiKey = enteredApiKey || String(current.apiKey || "").trim();
 
   if (!apiKey) {
     const error = new Error("API key is required");
@@ -70,9 +77,13 @@ export async function loadSettings(filePath) {
 
 export async function saveSettings(filePath, settings) {
   await mkdir(dirname(filePath), { recursive: true });
-  const temporaryFile = `${filePath}.tmp`;
-  await writeFile(temporaryFile, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporaryFile, filePath);
+  const temporaryFile = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryFile, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await rename(temporaryFile, filePath);
+  } finally {
+    await rm(temporaryFile, { force: true });
+  }
 }
 
 export function publicSettings(settings) {

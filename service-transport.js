@@ -11,6 +11,7 @@ function uncertainWriteError(service, cause) {
     `Could not confirm whether ${service.label} completed the request. Check ${service.label} before retrying.`,
   );
   error.status = 502;
+  error.uncertain = true;
   error.cause = cause;
   return error;
 }
@@ -27,6 +28,7 @@ export function createServiceTransport({
 
     try {
       response = await fetchImpl(url, {
+        redirect: "error",
         headers: {
           "X-Api-Key": service.apiKey,
           accept: "application/json",
@@ -48,6 +50,7 @@ export function createServiceTransport({
 
     try {
       response = await fetchImpl(url, {
+        redirect: "error",
         method,
         headers: {
           "X-Api-Key": service.apiKey,
@@ -78,6 +81,7 @@ export function createServiceTransport({
 
     try {
       response = await fetchImpl(url, {
+        redirect: "error",
         method: "DELETE",
         headers: {
           "X-Api-Key": service.apiKey,

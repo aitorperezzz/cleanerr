@@ -4,6 +4,8 @@ Cleanerr is a small web application for reviewing the disk space used by a
 Radarr and Sonarr library. It can sort movies, series, seasons, and Radarr
 collections by size and perform monitoring or deletion actions from one place.
 
+![Cleanerr desktop overview showing movies and shows sorted by disk usage](docs/screenshots/cleanerr.jpg)
+
 > [!WARNING]
 > Some actions delete media files from disk through Radarr or Sonarr. Review
 > every confirmation carefully. Cleanerr does not provide an undo function.
@@ -12,7 +14,9 @@ collections by size and perform monitoring or deletion actions from one place.
 
 Configure the URLs and API keys for your Radarr and Sonarr instances in
 Settings. Each service has separate **Test connection** and **Save** actions.
-Leave an API key field empty to keep the saved value. Jellyfin is optional;
+Leave an API key field empty to keep the saved value for the same server URL.
+Enter a key when changing the URL. Use the final service URL: authenticated
+requests do not follow redirects. Jellyfin is optional;
 when configured, Cleanerr asks it to refresh its library after deleting media.
 
 Browse movies, series, seasons and collections, sort them by size, and review

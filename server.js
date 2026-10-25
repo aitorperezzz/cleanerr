@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { requireLibraryRevision, requireSafeWrite } from "./request-guards.js";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -5,6 +7,7 @@ import { extname, join, normalize } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
+import { createOperationQueue } from "./operation-queue.js";
 import { createLibraryActions } from "./library-actions.js";
 import {
   createJellyfinRefreshScheduler,
@@ -12,6 +15,7 @@ import {
 } from "./jellyfin-refresh.js";
 import { createRadarrSnapshot } from "./radarr-snapshot.js";
 import { createServiceTransport, requireConfiguredService } from "./service-transport.js";
+import { getSeasonAvailability } from "./season-availability.js";
 import { groupStorageDisks } from "./storage-disks.js";
 import {
   loadSettings,
@@ -29,6 +33,8 @@ const { host: HOST, port: PORT } = config;
 const serviceLabels = { radarr: "Radarr", sonarr: "Sonarr", jellyfin: "Jellyfin" };
 let settings = await loadSettings(config.settingsFile);
 let services = buildServices(settings);
+let configurationRevision = randomUUID();
+const runSettingsUpdate = createOperationQueue();
 const { fetchJson, sendJson, deleteEndpoint } = createServiceTransport({
   readFallback: curlJson,
   onWrite: (service) => {
@@ -104,7 +110,6 @@ async function curlText(service, url) {
   requireConfiguredService(service);
   const args = [
     "-sS",
-    "-L",
     "-w",
     "\n%{http_code}",
     "-X",
@@ -132,21 +137,16 @@ async function curlText(service, url) {
   return responseBody;
 }
 
-const {
-  deleteCollection,
-  deleteFromService,
-  removeSeason,
-  setCollectionMonitoring,
-  setSeasonMonitoring,
-  setSeriesMonitoring,
-  unmonitorCollectionAndDeleteMovie,
-} = createLibraryActions({
-  getService: (name) => services[name],
-  fetchJson,
-  sendJson,
-  deleteEndpoint,
-  refreshJellyfinLibrary: scheduleJellyfinLibraryRefresh,
-});
+function libraryActions() {
+  const serviceSnapshot = services;
+  return createLibraryActions({
+    getService: (name) => serviceSnapshot[name],
+    fetchJson,
+    sendJson,
+    deleteEndpoint,
+    refreshJellyfinLibrary: scheduleJellyfinLibraryRefresh,
+  });
+}
 
 async function proxyMedia(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -165,6 +165,7 @@ async function proxyMedia(req, res) {
   mediaUrl.searchParams.set("apikey", service.apiKey);
 
   const response = await fetch(mediaUrl, {
+    redirect: "error",
     method: req.method,
     headers: {
       "X-Api-Key": service.apiKey,
@@ -287,7 +288,18 @@ async function getSonarrItems() {
   }));
 }
 
+async function handleSeasonAvailability(req, res, seriesId) {
+  const revision = configurationRevision;
+  const sonarr = services.sonarr;
+  const episodes = await fetchJson(sonarr, `episode?seriesId=${Number(seriesId)}`);
+  jsonResponse(res, 200, {
+    configurationRevision: revision,
+    seasons: getSeasonAvailability(episodes),
+  });
+}
+
 async function handleApiLibrary(req, res) {
+  const revision = configurationRevision;
   const results = await Promise.allSettled([getRadarrItems(), getSonarrItems()]);
   const items = results
     .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
@@ -302,6 +314,7 @@ async function handleApiLibrary(req, res) {
     .filter(Boolean);
 
   jsonResponse(res, errors.length ? 207 : 200, {
+    configurationRevision: revision,
     updatedAt: new Date().toISOString(),
     totalSizeOnDisk: items.reduce((sum, item) => sum + item.sizeOnDisk, 0),
     count: items.length,
@@ -343,6 +356,7 @@ async function testServiceConnection(serviceName, input) {
 
   try {
     response = await fetch(url, {
+      redirect: "error",
       headers: isJellyfin
         ? {
             Authorization: `MediaBrowser Client="Cleanerr", Device="Cleanerr", DeviceId="cleanerr", Version="0.1.0", Token="${candidate.apiKey}"`,
@@ -407,18 +421,22 @@ async function handleSettings(req, res) {
   }
 
   if (req.method === "PUT" && !action) {
-    const serviceSettings = normalizeServiceSettings(body, settings[serviceName], {
-      optional: serviceName === "jellyfin",
+    const result = await runSettingsUpdate("settings", async () => {
+      const serviceSettings = normalizeServiceSettings(body, settings[serviceName], {
+        optional: serviceName === "jellyfin",
+      });
+      const nextSettings = { ...settings, [serviceName]: serviceSettings };
+      await saveSettings(config.settingsFile, nextSettings);
+      settings = nextSettings;
+      services = buildServices(settings);
+      configurationRevision = randomUUID();
+      radarrSnapshot.invalidate();
+      return {
+        service: publicSettings(settings).services[serviceName],
+        complete: publicSettings(settings).complete,
+      };
     });
-    const nextSettings = { ...settings, [serviceName]: serviceSettings };
-    await saveSettings(config.settingsFile, nextSettings);
-    settings = nextSettings;
-    services = buildServices(settings);
-    radarrSnapshot.invalidate();
-    jsonResponse(res, 200, {
-      service: publicSettings(settings).services[serviceName],
-      complete: publicSettings(settings).complete,
-    });
+    jsonResponse(res, 200, result);
     return;
   }
 
@@ -426,9 +444,11 @@ async function handleSettings(req, res) {
 }
 
 async function handleApiCollections(req, res) {
+  const revision = configurationRevision;
   const collections = await getRadarrCollections();
 
   jsonResponse(res, 200, {
+    configurationRevision: revision,
     updatedAt: new Date().toISOString(),
     totalSizeOnDisk: collections.reduce((sum, collection) => sum + collection.sizeOnDisk, 0),
     count: collections.length,
@@ -465,6 +485,8 @@ async function handleApiStorage(req, res) {
 }
 
 async function handleCollectionAction(req, res) {
+  requireLibraryRevision(req, configurationRevision);
+  const { setCollectionMonitoring, deleteCollection } = libraryActions();
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
   const monitorMatch = pathname.match(/^\/api\/collections\/(\d+)\/monitor$/);
   const unmonitorMatch = pathname.match(/^\/api\/collections\/(\d+)\/unmonitor$/);
@@ -492,6 +514,8 @@ async function handleCollectionAction(req, res) {
 }
 
 async function handleLibraryAction(req, res) {
+  requireLibraryRevision(req, configurationRevision);
+  const { unmonitorCollectionAndDeleteMovie, setSeasonMonitoring, setSeriesMonitoring, removeSeason, deleteFromService } = libraryActions();
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
   const seasonMatch = pathname.match(/^\/api\/library\/sonarr\/(\d+)\/seasons\/(\d+)$/);
   const monitorSeasonMatch = pathname.match(/^\/api\/library\/sonarr\/(\d+)\/seasons\/(\d+)\/monitor$/);
@@ -568,6 +592,7 @@ async function serveStatic(req, res) {
 
 const server = createServer(async (req, res) => {
   try {
+    requireSafeWrite(req);
     if (req.url?.startsWith("/api/settings")) {
       await handleSettings(req, res);
       return;
@@ -598,6 +623,13 @@ const server = createServer(async (req, res) => {
       return;
     }
 
+    const seasonAvailabilityMatch = new URL(req.url, `http://${req.headers.host}`).pathname
+      .match(/^\/api\/library\/sonarr\/(\d+)\/season-availability$/);
+    if ((req.method === "GET" || req.method === "HEAD") && seasonAvailabilityMatch) {
+      await handleSeasonAvailability(req, res, seasonAvailabilityMatch[1]);
+      return;
+    }
+
     if ((req.method === "GET" || req.method === "HEAD") && req.url?.startsWith("/api/library")) {
       await handleApiLibrary(req, res);
       return;
@@ -610,7 +642,11 @@ const server = createServer(async (req, res) => {
 
     jsonResponse(res, 405, { error: "Method not allowed" });
   } catch (error) {
-    jsonResponse(res, error.status || 500, { error: error.message || "Internal server error" });
+    jsonResponse(res, error.status || 500, {
+      error: error.message || "Internal server error",
+      ...(error.partialResult ? { partialResult: error.partialResult } : {}),
+      ...(error.uncertain ? { uncertain: true } : {}),
+    });
   }
 });
 
