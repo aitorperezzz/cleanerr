@@ -15,6 +15,7 @@ import {
 } from "./jellyfin-refresh.js";
 import { createRadarrSnapshot } from "./radarr-snapshot.js";
 import { createServiceTransport, requireConfiguredService } from "./service-transport.js";
+import { getSeasonAvailability } from "./season-availability.js";
 import { groupStorageDisks } from "./storage-disks.js";
 import {
   loadSettings,
@@ -285,6 +286,16 @@ async function getSonarrItems() {
       sizeOnDisk: bytesToNumber(season.statistics?.sizeOnDisk),
     })),
   }));
+}
+
+async function handleSeasonAvailability(req, res, seriesId) {
+  const revision = configurationRevision;
+  const sonarr = services.sonarr;
+  const episodes = await fetchJson(sonarr, `episode?seriesId=${Number(seriesId)}`);
+  jsonResponse(res, 200, {
+    configurationRevision: revision,
+    seasons: getSeasonAvailability(episodes),
+  });
 }
 
 async function handleApiLibrary(req, res) {
@@ -609,6 +620,13 @@ const server = createServer(async (req, res) => {
 
     if ((req.method === "GET" || req.method === "HEAD") && req.url?.startsWith("/api/collections")) {
       await handleApiCollections(req, res);
+      return;
+    }
+
+    const seasonAvailabilityMatch = new URL(req.url, `http://${req.headers.host}`).pathname
+      .match(/^\/api\/library\/sonarr\/(\d+)\/season-availability$/);
+    if ((req.method === "GET" || req.method === "HEAD") && seasonAvailabilityMatch) {
+      await handleSeasonAvailability(req, res, seasonAvailabilityMatch[1]);
       return;
     }
 

@@ -285,6 +285,7 @@ function createSeasonItem(season, series, title) {
   const label = season.seasonNumber === 0 ? "Specials" : `Season ${season.seasonNumber}`;
   const episodes = `${season.episodeFileCount}/${season.totalEpisodeCount} episodes`;
   const hasFiles = season.episodeFileCount > 0 || season.sizeOnDisk > 0;
+  const isMonitored = Boolean(season.monitored && series.monitored);
   seasonItem.dataset.seriesId = series.id;
   seasonItem.dataset.seriesTitle = title;
   seasonItem.dataset.seasonNumber = season.seasonNumber;
@@ -292,7 +293,7 @@ function createSeasonItem(season, series, title) {
   seasonItem.dataset.hasFiles = hasFiles;
   seasonItem.classList.toggle(
     "is-unmonitored-missing",
-    (!season.monitored || !series.monitored) && !hasFiles,
+    !isMonitored && !hasFiles,
   );
   seasonItem.innerHTML = `
     <span class="season-name"></span>
@@ -304,15 +305,14 @@ function createSeasonItem(season, series, title) {
   const episodeCount = seasonItem.querySelector(".season-episodes");
   episodeCount.textContent = episodes;
   episodeCount.dataset.short = `${season.episodeFileCount}/${season.totalEpisodeCount}`;
-  episodeCount.setAttribute("aria-label", episodes);
+  episodeCount.dataset.monitored = String(isMonitored);
+  const availabilityHint = isMonitored ? "Checking air dates..." : "Not monitored.";
+  episodeCount.setAttribute("aria-label", `${episodes}. ${availabilityHint}`);
+  episodeCount.title = availabilityHint;
   seasonItem.querySelector(".season-size").textContent = formatBytes(season.sizeOnDisk);
   const actionButton = seasonItem.querySelector(".season-action-button");
 
-  if (!series.monitored) {
-    actionButton.classList.add("season-series-unmonitored-button");
-    actionButton.textContent = "Series not monitored";
-    actionButton.disabled = true;
-  } else if (!season.monitored) {
+  if (!isMonitored && !hasFiles) {
     actionButton.classList.add("monitor-season-button");
     actionButton.textContent = "Monitor";
   } else {
@@ -321,6 +321,48 @@ function createSeasonItem(season, series, title) {
   }
 
   return seasonItem;
+}
+
+function renderSeasonAvailability(counter, status) {
+  const isMonitored = counter.dataset.monitored === "true";
+  counter.classList.toggle("is-up-to-date", isMonitored && status?.state === "up-to-date");
+  counter.classList.toggle("is-missing", isMonitored && status?.state === "missing");
+  let description = "Episode air dates are unavailable.";
+  if (status) {
+    const episodes = `${status.episodeFileCount}/${status.totalEpisodeCount}`;
+    counter.textContent = `${episodes} episodes`;
+    counter.dataset.short = episodes;
+    if (status.state === "missing") {
+      description = `${status.missingEpisodeCount} aired episode(s) missing.`;
+    } else if (status.state === "up-to-date") {
+      description = status.episodeFileCount === status.totalEpisodeCount
+        ? "All episodes downloaded." : "Up to date. Remaining episodes have not aired yet.";
+    } else if (status.state === "upcoming") {
+      description = "No episodes have aired yet.";
+    } else {
+      description = `Air dates are unknown for ${status.unknownDateCount} undownloaded episode(s).`;
+    }
+  }
+  if (!isMonitored) description = "Not monitored.";
+  counter.title = description;
+  counter.setAttribute("aria-label", `${counter.dataset.short} episodes. ${description}`);
+}
+
+async function loadSeasonAvailability(seasonList, seriesId) {
+  const revision = configurationRevision;
+  const counters = [...seasonList.querySelectorAll(".season-item")];
+  try {
+    const response = await fetch(`/api/library/sonarr/${seriesId}/season-availability`, { cache: "no-store" });
+    const data = await readJsonResponse(response);
+    if (!response.ok) throw new Error(data.error || "Could not check air dates");
+    if (revision !== configurationRevision || data.configurationRevision !== revision) return;
+    const bySeason = new Map(data.seasons.map(season => [season.seasonNumber, season]));
+    for (const row of counters) {
+      renderSeasonAvailability(row.querySelector(".season-episodes"), bySeason.get(Number(row.dataset.seasonNumber)));
+    }
+  } catch {
+    for (const row of counters) renderSeasonAvailability(row.querySelector(".season-episodes"), null);
+  }
 }
 
 function createCollectionMovie(movie) {
@@ -444,6 +486,7 @@ function openMediaDetail(card, item) {
     );
     section.append(heading, seasonList);
     detailContent.append(section);
+    loadSeasonAvailability(seasonList, item.id);
   }
   prepareDetailPanel(card?.querySelector(".media-card-button") || null);
 }

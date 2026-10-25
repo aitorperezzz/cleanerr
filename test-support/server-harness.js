@@ -11,6 +11,7 @@ import { createOperationQueue } from "../operation-queue.js";
 import { createLibraryActions } from "../library-actions.js";
 import { createRadarrSnapshot } from "../radarr-snapshot.js";
 import * as jellyfin from "../jellyfin-refresh.js";
+import { getSeasonAvailability } from "../season-availability.js";
 import { groupStorageDisks } from "../storage-disks.js";
 
 // Execute the actual request handler with in-memory HTTP and fake service responses.
@@ -21,7 +22,7 @@ export async function serverHarness({ fetchImpl, saveSettings = async () => {} }
     .replaceAll("import.meta.url", JSON.stringify(new URL("../server.js", import.meta.url).href));
   const context = vm.createContext({
     ...guards, ...settingsStore, ...jellyfin, ...transport,
-    createLibraryActions, createRadarrSnapshot, groupStorageDisks, createOperationQueue,
+    createLibraryActions, createRadarrSnapshot, groupStorageDisks, createOperationQueue, getSeasonAvailability,
     readFile, fileURLToPath, join, normalize, extname, randomUUID, promisify,
     URL, Buffer, AbortSignal, console: { log() {}, warn() {} },
     config: { host: "127.0.0.1", port: 3050, settingsFile: "/fake/config.json" },

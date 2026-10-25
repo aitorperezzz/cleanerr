@@ -333,3 +333,26 @@ test("movie deletion failures report the collection that was already unmonitored
   });
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
+
+test("retrying an unmonitored season deletion removes all remaining files without monitoring it", async () => {
+  const series = { id: 5, monitored: false, seasons: [{ seasonNumber: 1, monitored: false }] };
+  const files = new Set([10, 11, 12]);
+  let failOnce = true;
+  const { actions, calls } = setup({
+    responses: {
+      "Sonarr:series/5": () => structuredClone(series),
+      "Sonarr:episode?seriesId=5&includeEpisodeFile=true": () => [...files].map(id => ({ seasonNumber: 1, episodeFileId: id })),
+    },
+    deleteEndpoint: async (_service, url) => {
+      const id = Number(String(url).split("/").at(-1));
+      if (id === 11 && failOnce) { failOnce = false; throw new Error("temporary failure"); }
+      files.delete(id);
+    },
+  });
+  await assert.rejects(actions.removeSeason(5, 1), /1 of 3 episode files confirmed deleted/);
+  assert.deepEqual([...files], [11, 12]);
+  const result = await actions.removeSeason(5, 1);
+  assert.equal(result.deletedFiles, 2);
+  assert.equal(files.size, 0);
+  assert.ok(calls.send.every(call => call.endpoint === "series/5" && !call.body.monitored && !call.body.seasons[0].monitored));
+});

@@ -329,6 +329,14 @@ button.is-busy:disabled {
   white-space: nowrap;
 }
 
+.season-episodes.is-up-to-date {
+  color: var(--green-bright);
+}
+
+.season-episodes.is-missing {
+  color: #ff8c86;
+}
+
 .season-size {
   text-align: right;
 }

@@ -137,3 +137,21 @@ test("partial season deletions expose confirmed progress and stop after an uncer
   assert.equal(response.body.partialResult.notAttemptedFiles, 1);
   assert.equal(deletes, 2);
 });
+
+test("season availability uses episode air dates, including unmonitored missing episodes", async () => {
+  const reads = [];
+  const request = await serverHarness({ fetchImpl: async url => {
+    reads.push(String(url));
+    return jsonResponse([
+      { seasonNumber: 1, hasFile: false, monitored: false, airDateUtc: "2000-01-01T00:00:00Z" },
+      { seasonNumber: 2, hasFile: true, airDateUtc: "2000-01-01T00:00:00Z" },
+      { seasonNumber: 2, hasFile: false, airDateUtc: "2999-01-01T00:00:00Z" },
+    ]);
+  } });
+  const response = await request("/api/library/sonarr/53/season-availability");
+  assert.equal(response.status, 200);
+  assert.ok(response.body.configurationRevision);
+  assert.equal(response.body.seasons[0].state, "missing");
+  assert.equal(response.body.seasons[1].state, "up-to-date");
+  assert.deepEqual(reads, ["http://sonarr/api/v3/episode?seriesId=53"]);
+});
