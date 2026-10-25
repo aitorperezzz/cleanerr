@@ -7,6 +7,7 @@ import vm from "node:vm";
 import * as guards from "../request-guards.js";
 import * as settingsStore from "../settings-store.js";
 import * as transport from "../service-transport.js";
+import { createOperationQueue } from "../operation-queue.js";
 import { createLibraryActions } from "../library-actions.js";
 import { createRadarrSnapshot } from "../radarr-snapshot.js";
 import * as jellyfin from "../jellyfin-refresh.js";
@@ -20,7 +21,7 @@ export async function serverHarness({ fetchImpl, saveSettings = async () => {} }
     .replaceAll("import.meta.url", JSON.stringify(new URL("../server.js", import.meta.url).href));
   const context = vm.createContext({
     ...guards, ...settingsStore, ...jellyfin, ...transport,
-    createLibraryActions, createRadarrSnapshot, groupStorageDisks,
+    createLibraryActions, createRadarrSnapshot, groupStorageDisks, createOperationQueue,
     readFile, fileURLToPath, join, normalize, extname, randomUUID, promisify,
     URL, Buffer, AbortSignal, console: { log() {}, warn() {} },
     config: { host: "127.0.0.1", port: 3050, settingsFile: "/fake/config.json" },

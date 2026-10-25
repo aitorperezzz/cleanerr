@@ -7,6 +7,7 @@ import { extname, join, normalize } from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { config } from "./config.js";
+import { createOperationQueue } from "./operation-queue.js";
 import { createLibraryActions } from "./library-actions.js";
 import {
   createJellyfinRefreshScheduler,
@@ -32,6 +33,7 @@ const serviceLabels = { radarr: "Radarr", sonarr: "Sonarr", jellyfin: "Jellyfin"
 let settings = await loadSettings(config.settingsFile);
 let services = buildServices(settings);
 let configurationRevision = randomUUID();
+const runSettingsUpdate = createOperationQueue();
 const { fetchJson, sendJson, deleteEndpoint } = createServiceTransport({
   readFallback: curlJson,
   onWrite: (service) => {
@@ -408,19 +410,22 @@ async function handleSettings(req, res) {
   }
 
   if (req.method === "PUT" && !action) {
-    const serviceSettings = normalizeServiceSettings(body, settings[serviceName], {
-      optional: serviceName === "jellyfin",
+    const result = await runSettingsUpdate("settings", async () => {
+      const serviceSettings = normalizeServiceSettings(body, settings[serviceName], {
+        optional: serviceName === "jellyfin",
+      });
+      const nextSettings = { ...settings, [serviceName]: serviceSettings };
+      await saveSettings(config.settingsFile, nextSettings);
+      settings = nextSettings;
+      services = buildServices(settings);
+      configurationRevision = randomUUID();
+      radarrSnapshot.invalidate();
+      return {
+        service: publicSettings(settings).services[serviceName],
+        complete: publicSettings(settings).complete,
+      };
     });
-    const nextSettings = { ...settings, [serviceName]: serviceSettings };
-    await saveSettings(config.settingsFile, nextSettings);
-    settings = nextSettings;
-    services = buildServices(settings);
-    configurationRevision = randomUUID();
-    radarrSnapshot.invalidate();
-    jsonResponse(res, 200, {
-      service: publicSettings(settings).services[serviceName],
-      complete: publicSettings(settings).complete,
-    });
+    jsonResponse(res, 200, result);
     return;
   }
 

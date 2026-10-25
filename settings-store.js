@@ -1,4 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, readFile, rename, writeFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export const serviceNames = ["radarr", "sonarr", "jellyfin"];
@@ -76,9 +77,13 @@ export async function loadSettings(filePath) {
 
 export async function saveSettings(filePath, settings) {
   await mkdir(dirname(filePath), { recursive: true });
-  const temporaryFile = `${filePath}.tmp`;
-  await writeFile(temporaryFile, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600 });
-  await rename(temporaryFile, filePath);
+  const temporaryFile = `${filePath}.${randomUUID()}.tmp`;
+  try {
+    await writeFile(temporaryFile, `${JSON.stringify(settings, null, 2)}\n`, { mode: 0o600, flag: "wx" });
+    await rename(temporaryFile, filePath);
+  } finally {
+    await rm(temporaryFile, { force: true });
+  }
 }
 
 export function publicSettings(settings) {

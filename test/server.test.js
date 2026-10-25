@@ -67,3 +67,35 @@ test("all library writes require the same-origin request guard", async () => {
   const headers = { "x-cleanerr-library-revision": library.body.configurationRevision, origin: "https://other.example" };
   assert.equal((await request("/api/library/radarr/42", { method: "DELETE", headers })).status, 403);
 });
+
+test("concurrent settings saves merge into the latest persisted state", async () => {
+  const saved = [];
+  const request = await serverHarness({
+    fetchImpl: async () => jsonResponse([]),
+    saveSettings: async (_path, value) => { await new Promise(resolve => setImmediate(resolve)); saved.push(structuredClone(value)); },
+  });
+  const responses = await Promise.all([
+    request("/api/settings/radarr", { method: "PUT", body: { url: "http://new-radarr", apiKey: "r" } }),
+    request("/api/settings/sonarr", { method: "PUT", body: { url: "http://new-sonarr", apiKey: "s" } }),
+  ]);
+  assert.ok(responses.every(response => response.status === 200));
+  const current = (await request("/api/settings")).body.services;
+  assert.equal(current.radarr.url, "http://new-radarr");
+  assert.equal(current.sonarr.url, "http://new-sonarr");
+  assert.equal(saved[1].radarr.url, current.radarr.url);
+  assert.equal(saved[1].sonarr.url, current.sonarr.url);
+});
+
+test("a failed settings save changes neither live configuration nor the next transaction", async () => {
+  let attempts = 0;
+  const request = await serverHarness({ fetchImpl: async () => jsonResponse([]), saveSettings: async () => { if (++attempts === 1) throw new Error("disk full"); } });
+  const responses = await Promise.all([
+    request("/api/settings/radarr", { method: "PUT", body: { url: "http://failed-radarr", apiKey: "r" } }),
+    request("/api/settings/sonarr", { method: "PUT", body: { url: "http://new-sonarr", apiKey: "s" } }),
+  ]);
+  assert.equal(responses[0].status, 500);
+  assert.equal(responses[1].status, 200);
+  const current = (await request("/api/settings")).body.services;
+  assert.equal(current.radarr.url, "http://radarr");
+  assert.equal(current.sonarr.url, "http://new-sonarr");
+});
