@@ -44,6 +44,8 @@ let activeQuery = "";
 let lastUpdatedAt = "";
 let searchRenderTimer = null;
 let libraryRevision = 0;
+let configurationRevision = "";
+let libraryLoadGeneration = 0;
 let renderedGridKey = null;
 let detailTrigger = null;
 
@@ -812,6 +814,27 @@ function renderView() {
   emptyState.hidden = hasItems;
 }
 
+async function fetchLibraryAction(url, options) {
+  if (!configurationRevision) throw new Error("Refresh the library before performing an action.");
+  return fetch(url, {
+    ...options,
+    headers: { ...options.headers, "X-Cleanerr-Library-Revision": configurationRevision },
+  });
+}
+
+function invalidateLibrary() {
+  libraryLoadGeneration += 1;
+  configurationRevision = "";
+  libraryItems = [];
+  collectionItems = [];
+  libraryRevision += 1;
+  clearViewRenderCache();
+  closeDetail({ restoreFocus: false });
+  lastUpdatedAt = "";
+  updatedAt.textContent = "-";
+  updatedAt.removeAttribute("title");
+}
+
 async function deleteItem(row) {
   const isCollectionMovie =
     row.dataset.service === "radarr" &&
@@ -832,7 +855,7 @@ async function deleteItem(row) {
     const endpoint = isCollectionMovie
       ? `/api/library/radarr/${row.dataset.id}/collection-safe`
       : `/api/library/${row.dataset.service}/${row.dataset.id}`;
-    const response = await fetch(endpoint, { method: "DELETE" });
+    const response = await fetchLibraryAction(endpoint, { method: "DELETE" });
     const data = await readJsonResponse(response);
 
     if (!response.ok) {
@@ -859,7 +882,7 @@ async function monitorSeries(row) {
   button.textContent = "Updating...";
 
   try {
-    const response = await fetch(`/api/library/sonarr/${row.dataset.id}/monitor`, {
+    const response = await fetchLibraryAction(`/api/library/sonarr/${row.dataset.id}/monitor`, {
       method: "PATCH",
     });
     const data = await readJsonResponse(response);
@@ -890,7 +913,7 @@ async function removeSeason(seasonItem) {
   button.textContent = "Removing...";
 
   try {
-    const response = await fetch(
+    const response = await fetchLibraryAction(
       `/api/library/sonarr/${seasonItem.dataset.seriesId}/seasons/${seasonItem.dataset.seasonNumber}`,
       { method: "DELETE" },
     );
@@ -921,7 +944,7 @@ async function monitorSeason(seasonItem) {
   button.textContent = "Starting search...";
 
   try {
-    const response = await fetch(
+    const response = await fetchLibraryAction(
       `/api/library/sonarr/${seasonItem.dataset.seriesId}/seasons/${seasonItem.dataset.seasonNumber}/monitor`,
       { method: "PATCH" },
     );
@@ -955,7 +978,7 @@ async function setCollectionMonitoring(card) {
 
   try {
     const action = shouldMonitor ? "monitor" : "unmonitor";
-    const response = await fetch(`/api/collections/${card.dataset.id}/${action}`, {
+    const response = await fetchLibraryAction(`/api/collections/${card.dataset.id}/${action}`, {
       method: "PATCH",
     });
     const data = await readJsonResponse(response);
@@ -984,7 +1007,7 @@ async function deleteCollection(card) {
   button.textContent = "Deleting...";
 
   try {
-    const response = await fetch(`/api/collections/${card.dataset.id}`, {
+    const response = await fetchLibraryAction(`/api/collections/${card.dataset.id}`, {
       method: "DELETE",
     });
     const data = await readJsonResponse(response);
@@ -1075,6 +1098,7 @@ async function saveServiceSettings(form) {
     });
     const data = await readJsonResponse(response);
     if (!response.ok) throw new Error(data.error || "Could not save settings");
+    invalidateLibrary();
     settingsState.services[form.dataset.service] = data.service;
     settingsState.complete = data.complete;
     renderServiceSettings(form, data.service);
@@ -1093,6 +1117,7 @@ async function saveServiceSettings(form) {
 }
 
 async function loadLibrary() {
+  const generation = ++libraryLoadGeneration;
   if (!detailPanel.hidden && new URLSearchParams(window.location.search).has("detail")) {
     if (window.history.state?.detailEntry) window.history.back();
     else window.history.replaceState({}, "", viewPaths[activeView]);
@@ -1112,6 +1137,7 @@ async function loadLibrary() {
     ]);
     const data = await readJsonResponse(libraryResponse);
     const collectionsData = await readJsonResponse(collectionsResponse);
+    if (generation !== libraryLoadGeneration) return;
 
     if (!libraryResponse.ok && libraryResponse.status !== 207) {
       throw new Error(data.error || "Could not load the library");
@@ -1120,6 +1146,10 @@ async function loadLibrary() {
       throw new Error(collectionsData.error || "Could not load collections");
     }
 
+    if (!data.configurationRevision || data.configurationRevision !== collectionsData.configurationRevision) {
+      throw new Error("Service settings changed while loading. Refresh the library.");
+    }
+    configurationRevision = data.configurationRevision;
     libraryItems = data.items || [];
     collectionItems = collectionsData.collections || [];
     libraryRevision += 1;
@@ -1129,6 +1159,8 @@ async function loadLibrary() {
     renderErrors([...(data.errors || []), ...(collectionsData.errors || [])]);
     renderView();
   } catch (error) {
+    if (generation !== libraryLoadGeneration) return;
+    configurationRevision = "";
     libraryItems = [];
     collectionItems = [];
     libraryRevision += 1;
@@ -1139,6 +1171,7 @@ async function loadLibrary() {
     updatedAt.removeAttribute("title");
     emptyState.hidden = false;
   } finally {
+    if (generation !== libraryLoadGeneration) return;
     loadingState.hidden = true;
     refreshButton.disabled = false;
     refreshButton.classList.remove("is-busy");

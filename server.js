@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { requireLibraryRevision } from "./request-guards.js";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -29,6 +31,7 @@ const { host: HOST, port: PORT } = config;
 const serviceLabels = { radarr: "Radarr", sonarr: "Sonarr", jellyfin: "Jellyfin" };
 let settings = await loadSettings(config.settingsFile);
 let services = buildServices(settings);
+let configurationRevision = randomUUID();
 const { fetchJson, sendJson, deleteEndpoint } = createServiceTransport({
   readFallback: curlJson,
   onWrite: (service) => {
@@ -132,21 +135,16 @@ async function curlText(service, url) {
   return responseBody;
 }
 
-const {
-  deleteCollection,
-  deleteFromService,
-  removeSeason,
-  setCollectionMonitoring,
-  setSeasonMonitoring,
-  setSeriesMonitoring,
-  unmonitorCollectionAndDeleteMovie,
-} = createLibraryActions({
-  getService: (name) => services[name],
-  fetchJson,
-  sendJson,
-  deleteEndpoint,
-  refreshJellyfinLibrary: scheduleJellyfinLibraryRefresh,
-});
+function libraryActions() {
+  const serviceSnapshot = services;
+  return createLibraryActions({
+    getService: (name) => serviceSnapshot[name],
+    fetchJson,
+    sendJson,
+    deleteEndpoint,
+    refreshJellyfinLibrary: scheduleJellyfinLibraryRefresh,
+  });
+}
 
 async function proxyMedia(req, res) {
   const url = new URL(req.url, `http://${req.headers.host}`);
@@ -288,6 +286,7 @@ async function getSonarrItems() {
 }
 
 async function handleApiLibrary(req, res) {
+  const revision = configurationRevision;
   const results = await Promise.allSettled([getRadarrItems(), getSonarrItems()]);
   const items = results
     .flatMap((result) => (result.status === "fulfilled" ? result.value : []))
@@ -302,6 +301,7 @@ async function handleApiLibrary(req, res) {
     .filter(Boolean);
 
   jsonResponse(res, errors.length ? 207 : 200, {
+    configurationRevision: revision,
     updatedAt: new Date().toISOString(),
     totalSizeOnDisk: items.reduce((sum, item) => sum + item.sizeOnDisk, 0),
     count: items.length,
@@ -414,6 +414,7 @@ async function handleSettings(req, res) {
     await saveSettings(config.settingsFile, nextSettings);
     settings = nextSettings;
     services = buildServices(settings);
+    configurationRevision = randomUUID();
     radarrSnapshot.invalidate();
     jsonResponse(res, 200, {
       service: publicSettings(settings).services[serviceName],
@@ -426,9 +427,11 @@ async function handleSettings(req, res) {
 }
 
 async function handleApiCollections(req, res) {
+  const revision = configurationRevision;
   const collections = await getRadarrCollections();
 
   jsonResponse(res, 200, {
+    configurationRevision: revision,
     updatedAt: new Date().toISOString(),
     totalSizeOnDisk: collections.reduce((sum, collection) => sum + collection.sizeOnDisk, 0),
     count: collections.length,
@@ -465,6 +468,8 @@ async function handleApiStorage(req, res) {
 }
 
 async function handleCollectionAction(req, res) {
+  requireLibraryRevision(req, configurationRevision);
+  const { setCollectionMonitoring, deleteCollection } = libraryActions();
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
   const monitorMatch = pathname.match(/^\/api\/collections\/(\d+)\/monitor$/);
   const unmonitorMatch = pathname.match(/^\/api\/collections\/(\d+)\/unmonitor$/);
@@ -492,6 +497,8 @@ async function handleCollectionAction(req, res) {
 }
 
 async function handleLibraryAction(req, res) {
+  requireLibraryRevision(req, configurationRevision);
+  const { unmonitorCollectionAndDeleteMovie, setSeasonMonitoring, setSeriesMonitoring, removeSeason, deleteFromService } = libraryActions();
   const { pathname } = new URL(req.url, `http://${req.headers.host}`);
   const seasonMatch = pathname.match(/^\/api\/library\/sonarr\/(\d+)\/seasons\/(\d+)$/);
   const monitorSeasonMatch = pathname.match(/^\/api\/library\/sonarr\/(\d+)\/seasons\/(\d+)\/monitor$/);
