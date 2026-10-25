@@ -325,7 +325,7 @@ function createSeasonItem(season, series, title) {
 
 function renderSeasonAvailability(counter, status) {
   const isMonitored = counter.dataset.monitored === "true";
-  counter.classList.toggle("is-up-to-date", isMonitored && status?.state === "up-to-date");
+  counter.classList.toggle("is-up-to-date", isMonitored && Boolean(status) && status.state !== "missing");
   counter.classList.toggle("is-missing", isMonitored && status?.state === "missing");
   let description = "Episode air dates are unavailable.";
   if (status) {
@@ -334,13 +334,14 @@ function renderSeasonAvailability(counter, status) {
     counter.dataset.short = episodes;
     if (status.state === "missing") {
       description = `${status.missingEpisodeCount} aired episode(s) missing.`;
-    } else if (status.state === "up-to-date") {
-      description = status.episodeFileCount === status.totalEpisodeCount
-        ? "All episodes downloaded." : "Up to date. Remaining episodes have not aired yet.";
-    } else if (status.state === "upcoming") {
-      description = "No episodes have aired yet.";
+    } else if (status.unknownDateCount > 0) {
+      description = `No known aired episodes are missing. Air dates are unknown for ${status.unknownDateCount} undownloaded episode(s).`;
+    } else if (status.episodeFileCount === status.totalEpisodeCount) {
+      description = "All episodes downloaded.";
+    } else if (status.episodeFileCount === 0) {
+      description = "Up to date. No episodes have aired yet.";
     } else {
-      description = `Air dates are unknown for ${status.unknownDateCount} undownloaded episode(s).`;
+      description = "Up to date. Remaining episodes have not aired yet.";
     }
   }
   if (!isMonitored) description = "Not monitored.";

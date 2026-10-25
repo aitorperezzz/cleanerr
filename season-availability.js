@@ -20,8 +20,6 @@ export function getSeasonAvailability(episodes, now = Date.now()) {
   }
   return [...seasons.values()].map(season => ({
     ...season,
-    state: season.missingEpisodeCount > 0 ? "missing"
-      : season.unknownDateCount > 0 ? "unknown"
-      : season.episodeFileCount > 0 ? "up-to-date" : "upcoming",
+    state: season.missingEpisodeCount > 0 ? "missing" : "up-to-date",
   }));
 }

@@ -30,13 +30,13 @@ test("partially downloaded seasons are missing if even one aired episode lacks a
   assert.equal(season.missingEpisodeCount, 1);
 });
 
-test("a future season with no files is neutral", () => {
-  assert.equal(getSeasonAvailability(episodes({ downloaded: 0, aired: 0 }), now)[0].state, "upcoming");
+test("a future season with no files is up to date", () => {
+  assert.equal(getSeasonAvailability(episodes({ downloaded: 0, aired: 0 }), now)[0].state, "up-to-date");
 });
 
-test("unknown dates do not imply a complete or missing season", () => {
+test("unknown dates are reported without counting unaired episodes as missing", () => {
   const [season] = getSeasonAvailability([{ seasonNumber: 1, hasFile: false, airDateUtc: null }], now);
-  assert.equal(season.state, "unknown");
+  assert.equal(season.state, "up-to-date");
   assert.equal(season.unknownDateCount, 1);
 });
 
