@@ -85,9 +85,10 @@ test("episode counters expose green and red states with accessible descriptions"
   assert.equal(counter.classList.contains("is-up-to-date"), false);
   assert.equal(counter.classList.contains("is-missing"), true);
   assert.match(counter.title, /10 aired episode/);
-  app.renderSeasonAvailability(counter, { state: "upcoming", episodeFileCount: 0, totalEpisodeCount: 10 });
+  app.renderSeasonAvailability(counter, { state: "up-to-date", episodeFileCount: 0, totalEpisodeCount: 10 });
   assert.equal(counter.classList.contains("is-missing"), false);
-  assert.equal(counter.classList.contains("is-up-to-date"), false);
+  assert.equal(counter.classList.contains("is-up-to-date"), true);
+  assert.match(counter.title, /No episodes have aired yet/);
 });
 
 
@@ -108,4 +109,19 @@ test("unmonitored seasons keep neutral counts even when aired episodes are missi
       assert.match(counter.getAttribute("aria-label"), /Not monitored/);
     }
   }
+});
+
+
+test("monitored future seasons stay green even when Sonarr has not announced air dates", async () => {
+  const app = await appHarness();
+  const row = app.createSeasonItem(
+    { seasonNumber: 2, monitored: true, episodeFileCount: 0, totalEpisodeCount: 10, sizeOnDisk: 0 },
+    { id: 56, monitored: true }, "Dexter: Resurrection",
+  );
+  const counter = row.querySelector(".season-episodes");
+  app.renderSeasonAvailability(counter, { state: "up-to-date", episodeFileCount: 0, totalEpisodeCount: 10, unknownDateCount: 10 });
+  assert.equal(counter.dataset.short, "0/10");
+  assert.equal(counter.classList.contains("is-up-to-date"), true);
+  assert.equal(counter.classList.contains("is-missing"), false);
+  assert.match(counter.title, /Air dates are unknown/);
 });
