@@ -206,7 +206,13 @@ test("a partial season deletion still refreshes Jellyfin", async () => {
     },
   });
 
-  await assert.rejects(actions.removeSeason(5, 1), { message: "Sonarr deletion failed" });
+  await assert.rejects(actions.removeSeason(5, 1), error => {
+    assert.match(error.message, /1 of 2 episode files confirmed deleted/);
+    assert.equal(error.partialResult.monitored, false);
+    assert.equal(error.partialResult.deletedFiles, 1);
+    assert.equal(error.partialResult.failedFileId, 11);
+    return true;
+  });
   assert.equal(deleteCount, 2);
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
@@ -292,4 +298,38 @@ test("a failed series action does not block later actions on the same series", a
   const results = await Promise.allSettled([actions.setSeriesMonitoring(1, true), actions.setSeriesMonitoring(1, true)]);
   assert.equal(results[0].status, "rejected");
   assert.equal(results[1].value.monitored, true);
+});
+
+test("season monitoring remains confirmed when search submission fails", async () => {
+  const actions = createLibraryActions({
+    getService: () => ({ url: "http://partial-sonarr" }),
+    fetchJson: async () => ({ id: 1, seasons: [{ seasonNumber: 1, monitored: false }] }),
+    sendJson: async (_service, endpoint, _method, body) => {
+      if (endpoint === "command") throw new Error("search unavailable");
+      return body;
+    },
+  });
+  await assert.rejects(actions.setSeasonMonitoring(1, 1, true), error => {
+    assert.equal(error.partialResult.monitored, true);
+    assert.equal(error.partialResult.commandConfirmed, false);
+    assert.match(error.message, /monitoring was enabled/);
+    return true;
+  });
+});
+
+test("movie deletion failures report the collection that was already unmonitored", async () => {
+  const { actions, calls } = setup({
+    responses: {
+      "Radarr:movie/8": { id: 8, tmdbId: 80 },
+      "Radarr:collection": [{ id: 3, monitored: true, movies: [{ tmdbId: 80 }] }],
+    },
+    deleteEndpoint: async () => { throw new Error("deletion rejected"); },
+  });
+  await assert.rejects(actions.unmonitorCollectionAndDeleteMovie(8), error => {
+    assert.equal(error.partialResult.collectionId, 3);
+    assert.equal(error.partialResult.unmonitoredCollection, true);
+    assert.equal(error.partialResult.deletionConfirmed, false);
+    return true;
+  });
+  assert.equal(calls.jellyfinRefresh.length, 1);
 });

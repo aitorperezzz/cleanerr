@@ -624,7 +624,11 @@ const server = createServer(async (req, res) => {
 
     jsonResponse(res, 405, { error: "Method not allowed" });
   } catch (error) {
-    jsonResponse(res, error.status || 500, { error: error.message || "Internal server error" });
+    jsonResponse(res, error.status || 500, {
+      error: error.message || "Internal server error",
+      ...(error.partialResult ? { partialResult: error.partialResult } : {}),
+      ...(error.uncertain ? { uncertain: true } : {}),
+    });
   }
 });
 

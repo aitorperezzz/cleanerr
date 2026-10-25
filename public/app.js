@@ -1,3 +1,4 @@
+import { sendLibraryAction, refreshAfterActionError } from "./library-action-client.js";
 import { loadLibrarySnapshot } from "./library-loader.js";
 import {
   formatBytes,
@@ -816,15 +817,19 @@ function renderView() {
 }
 
 async function fetchLibraryAction(url, options) {
-  if (!configurationRevision) throw new Error("Refresh the library before performing an action.");
-  return fetch(url, {
-    ...options,
-    headers: { ...options.headers, "X-Cleanerr-Request": "1", "X-Cleanerr-Library-Revision": configurationRevision },
-  });
+  return sendLibraryAction(url, options, { configurationRevision, fetchImpl: fetch, readResponse: readJsonResponse });
+}
+
+async function reportLibraryActionError(error) {
+  await refreshAfterActionError(error, { reload: loadLibrary, render: renderErrors });
+  errorPanel.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
 function invalidateLibrary() {
   libraryLoadGeneration += 1;
+  loadingState.hidden = true;
+  refreshButton.disabled = false;
+  refreshButton.classList.remove("is-busy");
   configurationRevision = "";
   libraryItems = [];
   collectionItems = [];
@@ -865,7 +870,7 @@ async function deleteItem(row) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Delete";
@@ -894,7 +899,7 @@ async function monitorSeries(row) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Monitor";
@@ -926,7 +931,7 @@ async function removeSeason(seasonItem) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Delete";
@@ -957,7 +962,7 @@ async function monitorSeason(seasonItem) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Monitor";
@@ -990,7 +995,7 @@ async function setCollectionMonitoring(card) {
 
     await loadLibrary();
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = shouldMonitor ? "Monitor" : "Unmonitor";
@@ -1017,18 +1022,18 @@ async function deleteCollection(card) {
       throw new Error(data.error || "Could not delete the collection movies");
     }
 
-    await loadLibrary();
+    const refreshed = await loadLibrary();
     if (data.deleted?.failure) {
       const { deletedMovies, totalMovies, failure } = data.deleted;
       const notAttempted = totalMovies - deletedMovies - 1;
-      renderErrors([{
+      renderErrors([...(refreshed?.errors || []), {
         source: "Radarr",
-        message: `${deletedMovies} of ${totalMovies} movie(s) confirmed deleted from “${title}”. Could not confirm deletion of “${failure.title}”: ${failure.message}${notAttempted ? ` ${notAttempted} remaining movie(s) were not attempted.` : ""} Check Radarr before retrying.`,
+        message: `The collection was unmonitored. ${deletedMovies} of ${totalMovies} movie(s) confirmed deleted from “${title}”. Could not confirm deletion of “${failure.title}”: ${failure.message}${notAttempted ? ` ${notAttempted} remaining movie(s) were not attempted.` : ""} Check Radarr before retrying.`,
       }]);
       errorPanel.scrollIntoView({ behavior: "smooth", block: "start" });
     }
   } catch (error) {
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    await reportLibraryActionError(error);
     button.disabled = false;
     button.classList.remove("is-busy");
     button.textContent = "Delete movies";
@@ -1142,6 +1147,7 @@ async function loadLibrary() {
     renderUpdatedAt();
     renderErrors(data.errors);
     renderView();
+    return data;
   } catch (error) {
     if (generation !== libraryLoadGeneration) return;
     configurationRevision = "";
@@ -1149,11 +1155,13 @@ async function loadLibrary() {
     collectionItems = [];
     libraryRevision += 1;
     clearViewRenderCache();
-    renderErrors([{ source: "Cleanerr", message: error.message }]);
+    const errors = [{ source: "Cleanerr", message: error.message }];
+    renderErrors(errors);
     lastUpdatedAt = "";
     updatedAt.textContent = "-";
     updatedAt.removeAttribute("title");
     emptyState.hidden = false;
+    return { errors };
   } finally {
     if (generation !== libraryLoadGeneration) return;
     loadingState.hidden = true;

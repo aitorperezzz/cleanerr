@@ -99,3 +99,41 @@ test("a failed settings save changes neither live configuration nor the next tra
   assert.equal(current.radarr.url, "http://radarr");
   assert.equal(current.sonarr.url, "http://new-sonarr");
 });
+
+test("a failed collection command reports monitoring as completed without retrying the command", async () => {
+  const writes = [];
+  const request = await serverHarness({ fetchImpl: async (url, options) => {
+    url = String(url);
+    if (options.method) writes.push({ url, method: options.method });
+    if (url.endsWith("/command")) return jsonResponse({ error: "command unavailable" }, 500);
+    if (url.endsWith("/collection/6")) return jsonResponse({ id: 6, monitored: false, movies: [] });
+    return jsonResponse([]);
+  } });
+  const library = await request("/api/library");
+  const response = await request("/api/collections/6/monitor", { method: "PATCH", headers: { "x-cleanerr-library-revision": library.body.configurationRevision } });
+  assert.equal(response.status, 502);
+  assert.equal(response.body.partialResult.monitored, true);
+  assert.equal(response.body.partialResult.commandConfirmed, false);
+  assert.match(response.body.error, /monitoring was enabled/);
+  assert.equal(writes.length, 2);
+});
+
+test("partial season deletions expose confirmed progress and stop after an uncertain failure", async () => {
+  let deletes = 0;
+  const request = await serverHarness({ fetchImpl: async (url, options) => {
+    url = String(url);
+    if (options.method === "DELETE" && ++deletes === 2) throw new Error("connection lost");
+    if (url.endsWith("/series/5")) return jsonResponse({ id: 5, seasons: [{ seasonNumber: 1, monitored: true }] });
+    if (url.includes("/episode?")) return jsonResponse([10, 11, 12].map(id => ({ seasonNumber: 1, episodeFileId: id, episodeFile: { size: 100 } })));
+    return jsonResponse([]);
+  } });
+  const library = await request("/api/library");
+  const response = await request("/api/library/sonarr/5/seasons/1", { method: "DELETE", headers: { "x-cleanerr-library-revision": library.body.configurationRevision } });
+  assert.equal(response.status, 502);
+  assert.equal(response.body.uncertain, true);
+  assert.equal(response.body.partialResult.monitored, false);
+  assert.equal(response.body.partialResult.deletedFiles, 1);
+  assert.equal(response.body.partialResult.deletedSize, 100);
+  assert.equal(response.body.partialResult.notAttemptedFiles, 1);
+  assert.equal(deletes, 2);
+});

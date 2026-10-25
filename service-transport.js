@@ -11,6 +11,7 @@ function uncertainWriteError(service, cause) {
     `Could not confirm whether ${service.label} completed the request. Check ${service.label} before retrying.`,
   );
   error.status = 502;
+  error.uncertain = true;
   error.cause = cause;
   return error;
 }
