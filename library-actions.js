@@ -1,3 +1,7 @@
+import { createOperationQueue } from "./operation-queue.js";
+
+const runOperation = createOperationQueue();
+
 function httpError(message, status) {
   const error = new Error(message);
   error.status = status;
@@ -217,13 +221,20 @@ export function createLibraryActions({
     };
   }
 
+  function serialized(serviceName, seriesId, operation) {
+    const target = service(serviceName);
+    // Radarr operations can affect both a movie and its collection.
+    const resource = serviceName === "sonarr" ? `series:${Number(seriesId)}` : "collections-and-movies";
+    return runOperation(`${serviceName}:${target?.url}:${resource}`, operation);
+  }
+
   return {
-    deleteCollection,
-    deleteFromService,
-    removeSeason,
-    setCollectionMonitoring,
-    setSeasonMonitoring,
-    setSeriesMonitoring,
-    unmonitorCollectionAndDeleteMovie,
+    deleteCollection: (id) => serialized("radarr", null, () => deleteCollection(id)),
+    deleteFromService: (name, id) => serialized(name, id, () => deleteFromService(name, id)),
+    removeSeason: (id, season) => serialized("sonarr", id, () => removeSeason(id, season)),
+    setCollectionMonitoring: (id, monitored) => serialized("radarr", null, () => setCollectionMonitoring(id, monitored)),
+    setSeasonMonitoring: (id, season, monitored) => serialized("sonarr", id, () => setSeasonMonitoring(id, season, monitored)),
+    setSeriesMonitoring: (id, monitored) => serialized("sonarr", id, () => setSeriesMonitoring(id, monitored)),
+    unmonitorCollectionAndDeleteMovie: (id) => serialized("radarr", null, () => unmonitorCollectionAndDeleteMovie(id)),
   };
 }

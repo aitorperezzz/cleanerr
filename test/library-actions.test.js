@@ -270,3 +270,26 @@ test("invalid identifiers are rejected before calling a service", async () => {
   await assert.rejects(actions.removeSeason(1, -1), { message: "Invalid season", status: 400 });
   assert.deepEqual(calls, { fetch: [], send: [], delete: [], jellyfinRefresh: [] });
 });
+
+test("concurrent actions from separate requests preserve both season updates", async () => {
+  let persisted = { id: 1, monitored: true, seasons: [{ seasonNumber: 1, monitored: false }, { seasonNumber: 2, monitored: false }] };
+  const makeActions = () => createLibraryActions({
+    getService: () => ({ url: "http://concurrent-sonarr" }),
+    fetchJson: async () => { const snapshot = structuredClone(persisted); await new Promise(resolve => setImmediate(resolve)); return snapshot; },
+    sendJson: async (_service, endpoint, _method, body) => { if (endpoint === "series/1") persisted = structuredClone(body); return body; },
+  });
+  await Promise.all([makeActions().setSeasonMonitoring(1, 1, true), makeActions().setSeasonMonitoring("1", 2, true)]);
+  assert.ok(persisted.seasons.every(season => season.monitored));
+});
+
+test("a failed series action does not block later actions on the same series", async () => {
+  let fetches = 0;
+  const actions = createLibraryActions({
+    getService: () => ({ url: "http://recovering-sonarr" }),
+    fetchJson: async () => { if (++fetches === 1) throw new Error("offline"); return { id: 1, monitored: false }; },
+    sendJson: async (_service, _endpoint, _method, body) => body,
+  });
+  const results = await Promise.allSettled([actions.setSeriesMonitoring(1, true), actions.setSeriesMonitoring(1, true)]);
+  assert.equal(results[0].status, "rejected");
+  assert.equal(results[1].value.monitored, true);
+});
