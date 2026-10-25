@@ -44,7 +44,7 @@ export function createLibraryActions({
       : "addImportListExclusion";
     const url = new URL(`${targetService.url}/api/v3/${endpoint}/${numericId}`);
     url.searchParams.set("deleteFiles", "true");
-    url.searchParams.set(exclusionParam, "true");
+    url.searchParams.set(exclusionParam, serviceName === "radarr" ? "false" : "true");
     await deleteEndpoint(targetService, url);
     return { source: targetService.label, id: numericId };
   }
@@ -132,7 +132,15 @@ export function createLibraryActions({
     const radarr = service("radarr");
     const collection = await fetchJson(radarr, `collection/${numericId}`);
     collection.monitored = monitored;
-    return sendJson(radarr, `collection/${numericId}`, "PUT", collection);
+    if (monitored) collection.searchOnAdd = true;
+    const updatedCollection = await sendJson(radarr, `collection/${numericId}`, "PUT", collection);
+    if (monitored) {
+      await sendJson(radarr, "command", "POST", {
+        name: "RefreshCollections",
+        collectionIds: [numericId],
+      });
+    }
+    return updatedCollection;
   }
 
   async function deleteCollection(collectionId) {

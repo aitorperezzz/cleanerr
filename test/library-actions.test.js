@@ -29,7 +29,7 @@ function setup({ responses = {}, deleteEndpoint } = {}) {
   return { actions, calls };
 }
 
-test("movie deletion removes files and adds a Radarr import exclusion", async () => {
+test("movie deletion removes files without adding a Radarr import exclusion", async () => {
   const { actions, calls } = setup();
   const result = await actions.deleteFromService("radarr", "42");
 
@@ -38,7 +38,7 @@ test("movie deletion removes files and adds a Radarr import exclusion", async ()
   const url = new URL(calls.delete[0].url);
   assert.equal(url.pathname, "/api/v3/movie/42");
   assert.equal(url.searchParams.get("deleteFiles"), "true");
-  assert.equal(url.searchParams.get("addImportExclusion"), "true");
+  assert.equal(url.searchParams.get("addImportExclusion"), "false");
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
@@ -120,6 +120,7 @@ test("collection-safe movie deletion unmonitors its collection first", async () 
   assert.equal(calls.send[0].endpoint, "collection/3");
   assert.equal(calls.send[0].body.monitored, false);
   assert.equal(new URL(calls.delete[0].url).pathname, "/api/v3/movie/8");
+  assert.equal(new URL(calls.delete[0].url).searchParams.get("addImportExclusion"), "false");
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
@@ -149,6 +150,7 @@ test("deleting a collection only deletes movies belonging to it", async () => {
     calls.delete.map((call) => new URL(call.url).pathname),
     ["/api/v3/movie/11", "/api/v3/movie/12"],
   );
+  assert.ok(calls.delete.every((call) => new URL(call.url).searchParams.get("addImportExclusion") === "false"));
   assert.equal(calls.jellyfinRefresh.length, 1);
 });
 
@@ -231,13 +233,35 @@ test("monitoring a season also monitors its parent series and starts a season se
   });
 });
 
-test("monitoring and unmonitoring collections updates the requested state", async () => {
+test("monitoring a collection enables search on add and queues a refresh for that collection", async () => {
   const { actions, calls } = setup({
-    responses: { "Radarr:collection/6": { id: 6, monitored: false } },
+    responses: { "Radarr:collection/6": { id: 6, monitored: false, searchOnAdd: false, qualityProfileId: 3, rootFolderPath: "/movies" } },
   });
-  await actions.setCollectionMonitoring(6, true);
+  const result = await actions.setCollectionMonitoring(6, true);
   assert.equal(calls.send[0].endpoint, "collection/6");
   assert.equal(calls.send[0].body.monitored, true);
+  assert.equal(calls.send[0].body.searchOnAdd, true);
+  assert.equal(calls.send[0].body.qualityProfileId, 3);
+  assert.equal(calls.send[0].body.rootFolderPath, "/movies");
+  assert.deepEqual(calls.send[1], {
+    service: "Radarr",
+    endpoint: "command",
+    method: "POST",
+    body: { name: "RefreshCollections", collectionIds: [6] },
+  });
+  assert.equal(calls.send.length, 2);
+  assert.deepEqual(result, calls.send[0].body);
+});
+
+test("unmonitoring a collection preserves search settings and does not queue a refresh", async () => {
+  const { actions, calls } = setup({
+    responses: { "Radarr:collection/6": { id: 6, monitored: true, searchOnAdd: false } },
+  });
+  await actions.setCollectionMonitoring(6, false);
+  assert.equal(calls.send[0].endpoint, "collection/6");
+  assert.equal(calls.send[0].body.monitored, false);
+  assert.equal(calls.send[0].body.searchOnAdd, false);
+  assert.equal(calls.send.length, 1);
 });
 
 test("invalid identifiers are rejected before calling a service", async () => {

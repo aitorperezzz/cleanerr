@@ -945,7 +945,7 @@ async function setCollectionMonitoring(card) {
   const button = card.querySelector(".toggle-collection-monitor-button");
   const shouldMonitor = button.dataset.monitored !== "true";
   const message = shouldMonitor
-    ? `“${title}” will be monitored in Radarr.`
+    ? `“${title}” will be monitored and synced in Radarr. Missing movies will be added and searched now.`
     : `Radarr will stop monitoring “${title}”.`;
   if (!confirmAction(button, message)) return;
 
@@ -961,7 +961,7 @@ async function setCollectionMonitoring(card) {
     const data = await readJsonResponse(response);
 
     if (!response.ok) {
-      throw new Error(data.error || "Could not unmonitor the collection");
+      throw new Error(data.error || (shouldMonitor ? "Could not monitor and sync the collection" : "Could not unmonitor the collection"));
     }
 
     await loadLibrary();
