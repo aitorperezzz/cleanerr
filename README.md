@@ -4,6 +4,8 @@ Cleanerr is a small web application for reviewing the disk space used by a
 Radarr and Sonarr library. It can sort movies, series, seasons, and Radarr
 collections by size and perform monitoring or deletion actions from one place.
 
+![Cleanerr desktop overview showing movies and shows sorted by disk usage](docs/screenshots/cleanerr.jpg)
+
 > [!WARNING]
 > Some actions delete media files from disk through Radarr or Sonarr. Review
 > every confirmation carefully. Cleanerr does not provide an undo function.
