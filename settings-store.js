@@ -41,7 +41,13 @@ export function normalizeServiceSettings(input, current = {}, { optional = false
   if (optional && !enteredUrl) return { url: "", apiKey: "" };
 
   const url = normalizeUrl(enteredUrl);
-  const apiKey = String(input?.apiKey || current.apiKey || "").trim();
+  const enteredApiKey = String(input?.apiKey || "").trim();
+  if (!enteredApiKey && current.apiKey && (!current.url || url !== normalizeUrl(current.url))) {
+    const error = new Error("Enter an API key when changing the server URL.");
+    error.status = 400;
+    throw error;
+  }
+  const apiKey = enteredApiKey || String(current.apiKey || "").trim();
 
   if (!apiKey) {
     const error = new Error("API key is required");

@@ -27,7 +27,7 @@ test("service settings normalize URLs and preserve a saved API key", () => {
   assert.deepEqual(
     normalizeServiceSettings(
       { url: " http://radarr:7878/ ", apiKey: "" },
-      { apiKey: "saved-key" },
+      { url: "http://radarr:7878", apiKey: "saved-key" },
     ),
     { url: "http://radarr:7878", apiKey: "saved-key" },
   );
@@ -92,4 +92,11 @@ test("settings are written atomically with private file permissions", async () =
 
 test("unknown service names are rejected", () => {
   assert.throws(() => validateServiceName("lidarr"), { message: "Unknown service", status: 404 });
+});
+
+
+test("saved API keys cannot be forwarded to a different server URL", () => {
+  const saved = { url: "http://radarr:7878", apiKey: "saved-key" };
+  assert.throws(() => normalizeServiceSettings({ url: "https://other.example" }, saved), { status: 400 });
+  assert.equal(normalizeServiceSettings({ url: "https://other.example", apiKey: "new-key" }, saved).apiKey, "new-key");
 });

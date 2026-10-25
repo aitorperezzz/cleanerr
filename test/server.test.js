@@ -41,3 +41,29 @@ test("an in-flight collection deletion keeps its original service after settings
   assert.equal((await deleting).status, 200);
   assert.ok(writes.every(url => url.startsWith("http://radarr/")));
 });
+
+test("connection tests reject cross-origin and plaintext requests without leaking saved keys", async () => {
+  const calls = [];
+  const request = await serverHarness({ fetchImpl: async (url, options) => { calls.push({ url, options }); return jsonResponse({}); } });
+  const body = { url: "https://untrusted.example", apiKey: "" };
+  for (const headers of [
+    { "x-cleanerr-request": undefined, "content-type": "text/plain" },
+    { origin: "https://untrusted.example" },
+    { "content-type": "text/plain" },
+    {},
+  ]) {
+    const response = await request("/api/settings/radarr/test", { method: "POST", headers, body });
+    assert.ok([400, 403, 415].includes(response.status));
+  }
+  assert.equal(calls.length, 0);
+  assert.equal((await request("/api/settings/radarr/test", { method: "POST", body: { url: "http://radarr/" } })).status, 200);
+  assert.equal(calls[0].options.headers["X-Api-Key"], "fake-radarr");
+  assert.equal(calls[0].options.redirect, "error");
+});
+
+test("all library writes require the same-origin request guard", async () => {
+  const request = await serverHarness({ fetchImpl: async () => jsonResponse([]) });
+  const library = await request("/api/library");
+  const headers = { "x-cleanerr-library-revision": library.body.configurationRevision, origin: "https://other.example" };
+  assert.equal((await request("/api/library/radarr/42", { method: "DELETE", headers })).status, 403);
+});

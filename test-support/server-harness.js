@@ -36,7 +36,7 @@ export async function serverHarness({ fetchImpl, saveSettings = async () => {} }
     let status, responseHeaders, responseBody;
     const req = {
       url: path, method,
-      headers: { host: "cleanerr.local", origin: "http://cleanerr.local", "content-type": "application/json", ...headers },
+      headers: { host: "cleanerr.local", origin: "http://cleanerr.local", "content-type": "application/json", "x-cleanerr-request": "1", ...headers },
       async *[Symbol.asyncIterator]() { if (body !== undefined) yield Buffer.from(JSON.stringify(body)); },
     };
     const res = {

@@ -27,6 +27,7 @@ export function createServiceTransport({
 
     try {
       response = await fetchImpl(url, {
+        redirect: "error",
         headers: {
           "X-Api-Key": service.apiKey,
           accept: "application/json",
@@ -48,6 +49,7 @@ export function createServiceTransport({
 
     try {
       response = await fetchImpl(url, {
+        redirect: "error",
         method,
         headers: {
           "X-Api-Key": service.apiKey,
@@ -78,6 +80,7 @@ export function createServiceTransport({
 
     try {
       response = await fetchImpl(url, {
+        redirect: "error",
         method: "DELETE",
         headers: {
           "X-Api-Key": service.apiKey,

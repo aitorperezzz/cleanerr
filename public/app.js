@@ -818,7 +818,7 @@ async function fetchLibraryAction(url, options) {
   if (!configurationRevision) throw new Error("Refresh the library before performing an action.");
   return fetch(url, {
     ...options,
-    headers: { ...options.headers, "X-Cleanerr-Library-Revision": configurationRevision },
+    headers: { ...options.headers, "X-Cleanerr-Request": "1", "X-Cleanerr-Library-Revision": configurationRevision },
   });
 }
 
@@ -1067,7 +1067,7 @@ async function testConnection(form) {
   try {
     const response = await fetch(`/api/settings/${form.dataset.service}/test`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Cleanerr-Request": "1" },
       body: JSON.stringify(formPayload(form)),
     });
     const data = await readJsonResponse(response);
@@ -1093,7 +1093,7 @@ async function saveServiceSettings(form) {
   try {
     const response = await fetch(`/api/settings/${form.dataset.service}`, {
       method: "PUT",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", "X-Cleanerr-Request": "1" },
       body: JSON.stringify(formPayload(form)),
     });
     const data = await readJsonResponse(response);

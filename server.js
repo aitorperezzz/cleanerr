@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { requireLibraryRevision } from "./request-guards.js";
+import { requireLibraryRevision, requireSafeWrite } from "./request-guards.js";
 import { createServer } from "node:http";
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
@@ -107,7 +107,6 @@ async function curlText(service, url) {
   requireConfiguredService(service);
   const args = [
     "-sS",
-    "-L",
     "-w",
     "\n%{http_code}",
     "-X",
@@ -163,6 +162,7 @@ async function proxyMedia(req, res) {
   mediaUrl.searchParams.set("apikey", service.apiKey);
 
   const response = await fetch(mediaUrl, {
+    redirect: "error",
     method: req.method,
     headers: {
       "X-Api-Key": service.apiKey,
@@ -343,6 +343,7 @@ async function testServiceConnection(serviceName, input) {
 
   try {
     response = await fetch(url, {
+      redirect: "error",
       headers: isJellyfin
         ? {
             Authorization: `MediaBrowser Client="Cleanerr", Device="Cleanerr", DeviceId="cleanerr", Version="0.1.0", Token="${candidate.apiKey}"`,
@@ -575,6 +576,7 @@ async function serveStatic(req, res) {
 
 const server = createServer(async (req, res) => {
   try {
+    requireSafeWrite(req);
     if (req.url?.startsWith("/api/settings")) {
       await handleSettings(req, res);
       return;
