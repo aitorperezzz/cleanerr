@@ -1,3 +1,4 @@
+import { loadLibrarySnapshot } from "./library-loader.js";
 import {
   formatBytes,
   formatDate,
@@ -1130,33 +1131,16 @@ async function loadLibrary() {
   mediaGrid.hidden = true;
 
   try {
-    const refresh = Date.now();
-    const [libraryResponse, collectionsResponse] = await Promise.all([
-      fetch(`/api/library?refresh=${refresh}`, { cache: "no-store" }),
-      fetch(`/api/collections?refresh=${refresh}`, { cache: "no-store" }),
-    ]);
-    const data = await readJsonResponse(libraryResponse);
-    const collectionsData = await readJsonResponse(collectionsResponse);
+    const data = await loadLibrarySnapshot({ fetchImpl: fetch, readResponse: readJsonResponse });
     if (generation !== libraryLoadGeneration) return;
-
-    if (!libraryResponse.ok && libraryResponse.status !== 207) {
-      throw new Error(data.error || "Could not load the library");
-    }
-    if (!collectionsResponse.ok) {
-      throw new Error(collectionsData.error || "Could not load collections");
-    }
-
-    if (!data.configurationRevision || data.configurationRevision !== collectionsData.configurationRevision) {
-      throw new Error("Service settings changed while loading. Refresh the library.");
-    }
     configurationRevision = data.configurationRevision;
-    libraryItems = data.items || [];
-    collectionItems = collectionsData.collections || [];
+    libraryItems = data.items;
+    collectionItems = data.collections;
     libraryRevision += 1;
     clearViewRenderCache();
-    lastUpdatedAt = data.updatedAt || collectionsData.updatedAt;
+    lastUpdatedAt = data.updatedAt;
     renderUpdatedAt();
-    renderErrors([...(data.errors || []), ...(collectionsData.errors || [])]);
+    renderErrors(data.errors);
     renderView();
   } catch (error) {
     if (generation !== libraryLoadGeneration) return;
