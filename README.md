@@ -62,6 +62,13 @@ which is excluded from Git and the Docker build context. Installing `curl`
 is recommended as a fallback when Node.js cannot complete library reads.
 The server listens on `0.0.0.0:3050`, as defined in [config.json](config.json).
 
+Backend source lives in `server/`: `server.js` starts the HTTP server, while
+`app.js` creates the request handler with injectable service and settings access.
+Library reads, HTTP helpers, static files and the curl fallback have separate modules.
+Browser assets live in `public/`, with separate modules for service settings,
+library details and action confirmations. `styles.css` groups component styles
+and keeps responsive overrides at the end.
+
 Run `npm test` to check the code. Tests use fake service responses and do not
 connect to real Radarr, Sonarr or Jellyfin instances.
 

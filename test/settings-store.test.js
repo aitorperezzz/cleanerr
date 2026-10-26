@@ -9,7 +9,7 @@ import {
   publicSettings,
   saveSettings,
   validateServiceName,
-} from "../settings-store.js";
+} from "../server/settings-store.js";
 
 test("missing settings files produce an empty configuration", async () => {
   const directory = await mkdtemp(join(tmpdir(), "cleanerr-settings-"));

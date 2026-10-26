@@ -1,39 +1,16 @@
-import { readFile } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
-import { join, normalize, extname } from "node:path";
-import { randomUUID } from "node:crypto";
-import { promisify } from "node:util";
-import vm from "node:vm";
-import * as guards from "../request-guards.js";
-import * as settingsStore from "../settings-store.js";
-import * as transport from "../service-transport.js";
-import { createOperationQueue } from "../operation-queue.js";
-import { createLibraryActions } from "../library-actions.js";
-import { createRadarrSnapshot } from "../radarr-snapshot.js";
-import * as jellyfin from "../jellyfin-refresh.js";
-import { getSeasonAvailability } from "../season-availability.js";
-import { groupStorageDisks } from "../storage-disks.js";
+import { createApp } from "../server/app.js";
 
-// Execute the actual request handler with in-memory HTTP and fake service responses.
+// Exercise the imported request handler without opening ports or contacting services.
 export async function serverHarness({ fetchImpl, saveSettings = async () => {} } = {}) {
-  let handler;
-  const source = (await readFile(new URL("../server.js", import.meta.url), "utf8"))
-    .replace(/^import[\s\S]*?;\n/gm, "")
-    .replaceAll("import.meta.url", JSON.stringify(new URL("../server.js", import.meta.url).href));
-  const context = vm.createContext({
-    ...guards, ...settingsStore, ...jellyfin, ...transport,
-    createLibraryActions, createRadarrSnapshot, groupStorageDisks, createOperationQueue, getSeasonAvailability,
-    readFile, fileURLToPath, join, normalize, extname, randomUUID, promisify,
-    URL, Buffer, AbortSignal, console: { log() {}, warn() {} },
-    config: { host: "127.0.0.1", port: 3050, settingsFile: "/fake/config.json" },
-    execFile: (_cmd, _args, _opts, callback) => callback(new Error("Unexpected fallback")),
-    loadSettings: async () => Object.fromEntries(["radarr", "sonarr", "jellyfin"].map(name => [name, { url: `http://${name}`, apiKey: `fake-${name}` }])),
+  const handler = await createApp({
+    settingsFile: "/fake/config.json",
+    fetchImpl,
     saveSettings,
-    fetch: fetchImpl,
-    createServiceTransport: (options) => transport.createServiceTransport({ ...options, fetchImpl }),
-    createServer: (callback) => { handler = callback; return { listen() {} }; },
+    loadSettings: async () => Object.fromEntries(
+      ["radarr", "sonarr", "jellyfin"].map(name => [name, { url: `http://${name}`, apiKey: `fake-${name}` }]),
+    ),
+    readFallback: async () => { throw new Error("Unexpected fallback"); },
   });
-  await vm.runInContext(`(async () => { ${source}\n })()`, context);
   return async function request(path, { method = "GET", body, headers = {} } = {}) {
     let status, responseHeaders, responseBody;
     const req = {
@@ -47,7 +24,7 @@ export async function serverHarness({ fetchImpl, saveSettings = async () => {} }
       end(value = "") { responseBody = String(value); },
     };
     await handler(req, res);
-    return { status, headers: responseHeaders, body: responseBody ? JSON.parse(responseBody) : null };
+    return { status, headers: responseHeaders, body: responseBody ? (responseHeaders?.["content-type"]?.includes("application/json") ? JSON.parse(responseBody) : responseBody) : null };
   };
 }
 

@@ -3,7 +3,7 @@ import test from "node:test";
 import {
   createJellyfinRefreshScheduler,
   requestJellyfinLibraryRefresh,
-} from "../jellyfin-refresh.js";
+} from "../server/jellyfin-refresh.js";
 
 function wait(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));

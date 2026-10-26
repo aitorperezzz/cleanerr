@@ -155,3 +155,33 @@ test("season availability uses episode air dates, including unmonitored missing 
   assert.equal(response.body.seasons[1].state, "up-to-date");
   assert.deepEqual(reads, ["http://sonarr/api/v3/episode?seriesId=53"]);
 });
+
+test("application instances keep independent settings and library revisions", async () => {
+  const first = await serverHarness({ fetchImpl: async () => jsonResponse([]) });
+  const second = await serverHarness({ fetchImpl: async () => jsonResponse([]) });
+  const firstRevision = (await first("/api/library")).body.configurationRevision;
+  const secondRevision = (await second("/api/library")).body.configurationRevision;
+  assert.notEqual(firstRevision, secondRevision);
+  await first("/api/settings/radarr", { method: "PUT", body: { url: "http://first-radarr", apiKey: "r" } });
+  assert.equal((await first("/api/settings")).body.services.radarr.url, "http://first-radarr");
+  assert.equal((await second("/api/settings")).body.services.radarr.url, "http://radarr");
+  assert.equal((await second("/api/library")).body.configurationRevision, secondRevision);
+});
+
+test("the imported application serves SPA routes and every browser module", async () => {
+  const request = await serverHarness();
+  for (const route of ["/", "/overview", "/movies", "/shows", "/collections", "/settings"]) {
+    const response = await request(route);
+    assert.equal(response.status, 200, route);
+    assert.match(response.headers["content-type"], /text\/html/);
+    assert.match(response.body, /<title>Cleanerr<\/title>/);
+  }
+  for (const file of ["app.js", "detail-panel.js", "service-settings.js", "action-confirmation.js", "http-client.js", "library-utils.js", "library-loader.js", "library-action-client.js", "styles.css"]) {
+    const response = await request(`/${file}`);
+    assert.equal(response.status, 200, file);
+    assert.match(response.headers["content-type"], file.endsWith(".css") ? /text\/css/ : /text\/javascript/);
+    assert.ok(response.body.length > 0);
+    assert.equal((await request(`/${file}`, { method: "HEAD" })).body, null);
+  }
+  assert.equal((await request("/missing.js")).status, 404);
+});

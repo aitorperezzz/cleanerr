@@ -1,3 +1,4 @@
+/* Theme and base elements */
 :root {
   color-scheme: dark;
   font-family:
@@ -32,6 +33,7 @@ body {
   background: var(--background);
 }
 
+/* Application layout */
 .app-shell {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
@@ -117,6 +119,7 @@ button.is-busy:disabled {
   cursor: wait;
 }
 
+/* Header status and library controls */
 .status-bar {
   display: flex;
   min-height: 36px;
@@ -222,6 +225,7 @@ button.is-busy:disabled {
   outline: 0;
 }
 
+/* Navigation */
 .tabs {
   display: flex;
   flex: 1;
@@ -296,6 +300,7 @@ button.is-busy:disabled {
   stroke-width: 1.8;
 }
 
+/* Season rows and monitoring actions */
 .season-list {
   display: grid;
   gap: 6px;
@@ -362,13 +367,7 @@ button.is-busy:disabled {
   background: var(--green);
 }
 
-.season-series-unmonitored-button:disabled {
-  border-color: #353b41;
-  background: #24282c;
-  color: #939da5;
-  opacity: 1;
-}
-
+/* Shared posters and text */
 .poster {
   overflow: hidden;
   width: 48px;
@@ -394,6 +393,7 @@ button.is-busy:disabled {
   color: var(--muted);
 }
 
+/* Library actions and confirmations */
 .delete-button {
   min-height: 34px;
   border-color: #b3261e;
@@ -429,7 +429,7 @@ button.is-busy:disabled {
 
 .confirmation-notice {
   position: fixed;
-  z-index: 30;
+  z-index: 50;
   right: 22px;
   bottom: 22px;
   display: grid;
@@ -487,6 +487,7 @@ button.is-busy:disabled {
   opacity: 1;
 }
 
+/* Collection movie rows */
 .collection-movies {
   border-top: 1px solid var(--border);
   background: var(--surface-soft);
@@ -527,6 +528,7 @@ button.is-busy:disabled {
   font-weight: 750;
 }
 
+/* Settings layout and shared panels */
 .settings-panel {
   display: grid;
   gap: 13px;
@@ -540,6 +542,7 @@ button.is-busy:disabled {
   background: var(--surface);
 }
 
+/* Storage overview */
 .storage-panel {
   padding: 15px 17px 17px;
 }
@@ -552,13 +555,12 @@ button.is-busy:disabled {
   margin-bottom: 12px;
 }
 
-.storage-heading h2,
-.storage-heading p {
+.storage-heading h2 {
   margin: 0;
 }
 
 .storage-heading p {
-  margin-top: 6px;
+  margin: 6px 0 0;
 }
 
 .storage-updated {
@@ -688,17 +690,17 @@ button.is-busy:disabled {
   color: var(--text);
 }
 
+/* Service configuration */
 .settings-intro {
   padding: 15px 17px;
 }
 
-.settings-intro h2,
-.settings-intro p {
+.settings-intro h2 {
   margin: 0;
 }
 
 .settings-intro p {
-  margin-top: 6px;
+  margin: 6px 0 0;
 }
 
 .settings-grid {
@@ -713,19 +715,17 @@ button.is-busy:disabled {
   padding: 17px;
 }
 
-.service-heading,
-.service-heading > div {
+.service-heading {
   display: flex;
   align-items: center;
-}
-
-.service-heading {
   justify-content: space-between;
   gap: 12px;
   margin-bottom: 16px;
 }
 
 .service-heading > div {
+  display: flex;
+  align-items: center;
   gap: 10px;
 }
 
@@ -840,162 +840,11 @@ button.is-busy:disabled {
   font-weight: 750;
 }
 
-.badge {
-  display: inline-flex;
-  align-items: center;
-  min-height: 26px;
-  border-radius: 999px;
-  padding: 0 10px;
-  background: #173a2f;
-  color: #8cdbb9;
-  font-size: 0.85rem;
-  font-weight: 700;
-}
-
+/* Loading and empty states */
 .state {
   padding: 28px;
   color: var(--muted);
   text-align: center;
-}
-
-@media (max-width: 1100px) {
-  .settings-grid {
-    grid-template-columns: 1fr;
-  }
-}
-
-@media (max-width: 720px) {
-  body {
-    padding-bottom: 74px;
-  }
-
-  .app-shell {
-    display: block;
-  }
-
-  .sidebar {
-    position: fixed;
-    z-index: 20;
-    top: auto;
-    right: 0;
-    bottom: 0;
-    left: 0;
-    width: 100%;
-    height: auto;
-    border-top: 1px solid #252a2f;
-    border-right: 0;
-    padding: 5px 7px max(5px, env(safe-area-inset-bottom));
-  }
-
-  .brand {
-    display: none;
-  }
-
-  .tabs {
-    flex-direction: row;
-    gap: 3px;
-  }
-
-  .tab-button {
-    width: auto;
-    min-width: 0;
-    min-height: 50px;
-    flex: 1 1 0;
-    flex-direction: column;
-    justify-content: center;
-    gap: 2px;
-    border-radius: 7px;
-    padding: 4px 2px;
-    font-size: 0.68rem;
-    text-align: center;
-  }
-
-  .settings-nav-button {
-    margin-top: 0;
-  }
-
-  .nav-icon {
-    height: 22px;
-  }
-
-  .app {
-    width: min(100% - 20px, 1180px);
-    padding: 14px 0;
-  }
-
-  .header {
-    align-items: flex-start;
-    flex-direction: row;
-    gap: 10px;
-  }
-
-  .status-bar {
-    min-height: 34px;
-    gap: 6px;
-    padding-left: 9px;
-  }
-
-  .updated-status span,
-  .refresh-label {
-    display: none;
-  }
-
-  .refresh-icon {
-    display: inline;
-    font-size: 1rem;
-  }
-
-  .status-bar #refreshButton {
-    width: 28px;
-    min-height: 28px;
-    padding: 0;
-  }
-
-  .controls {
-    align-items: stretch;
-    flex-direction: column;
-  }
-
-  .sort-control {
-    flex-wrap: wrap;
-  }
-
-  .search-control {
-    width: 100%;
-  }
-
-  .settings-actions {
-    align-items: stretch;
-    flex-direction: column-reverse;
-  }
-
-  .settings-actions button {
-    width: 100%;
-  }
-
-  .service-heading {
-    flex-wrap: wrap;
-  }
-
-  .storage-panel {
-    padding: 14px;
-  }
-
-  .storage-heading {
-    flex-direction: column;
-    gap: 6px;
-  }
-
-  .storage-list {
-    grid-template-columns: 1fr;
-  }
-
-  .confirmation-notice {
-    right: 10px;
-    bottom: 82px;
-    width: calc(100% - 20px);
-  }
-
 }
 
 /* Poster library */
@@ -1395,8 +1244,146 @@ body.detail-open {
   width: 34px;
 }
 
-.confirmation-notice {
-  z-index: 50;
+
+/* Responsive layout and reduced motion */
+@media (max-width: 1100px) {
+  .settings-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  body {
+    padding-bottom: 74px;
+  }
+
+  .app-shell {
+    display: block;
+  }
+
+  .sidebar {
+    position: fixed;
+    z-index: 20;
+    top: auto;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: auto;
+    border-top: 1px solid #252a2f;
+    border-right: 0;
+    padding: 5px 7px max(5px, env(safe-area-inset-bottom));
+  }
+
+  .brand {
+    display: none;
+  }
+
+  .tabs {
+    flex-direction: row;
+    gap: 3px;
+  }
+
+  .tab-button {
+    width: auto;
+    min-width: 0;
+    min-height: 50px;
+    flex: 1 1 0;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    border-radius: 7px;
+    padding: 4px 2px;
+    font-size: 0.68rem;
+    text-align: center;
+  }
+
+  .settings-nav-button {
+    margin-top: 0;
+  }
+
+  .nav-icon {
+    height: 22px;
+  }
+
+  .app {
+    width: min(100% - 20px, 1180px);
+    padding: 14px 0;
+  }
+
+  .header {
+    align-items: flex-start;
+    flex-direction: row;
+    gap: 10px;
+  }
+
+  .status-bar {
+    min-height: 34px;
+    gap: 6px;
+    padding-left: 9px;
+  }
+
+  .updated-status span,
+  .refresh-label {
+    display: none;
+  }
+
+  .refresh-icon {
+    display: inline;
+    font-size: 1rem;
+  }
+
+  .status-bar #refreshButton {
+    width: 28px;
+    min-height: 28px;
+    padding: 0;
+  }
+
+  .controls {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sort-control {
+    flex-wrap: wrap;
+  }
+
+  .search-control {
+    width: 100%;
+  }
+
+  .settings-actions {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .settings-actions button {
+    width: 100%;
+  }
+
+  .service-heading {
+    flex-wrap: wrap;
+  }
+
+  .storage-panel {
+    padding: 14px;
+  }
+
+  .storage-heading {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .storage-list {
+    grid-template-columns: 1fr;
+  }
+
+  .confirmation-notice {
+    right: 10px;
+    bottom: 82px;
+    width: calc(100% - 20px);
+  }
+
 }
 
 @media (prefers-reduced-motion: reduce) {

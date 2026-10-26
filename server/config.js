@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const rootDir = dirname(fileURLToPath(import.meta.url));
+const rootDir = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const rawConfig = JSON.parse(readFileSync(resolve(rootDir, "config.json"), "utf8"));
 const host = String(rawConfig.server?.host || "").trim();
 const port = Number(rawConfig.server?.port);

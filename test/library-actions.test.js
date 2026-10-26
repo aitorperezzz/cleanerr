@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLibraryActions } from "../library-actions.js";
+import { createLibraryActions } from "../server/library-actions.js";
 
 function setup({ responses = {}, deleteEndpoint } = {}) {
   const services = {
