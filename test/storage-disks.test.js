@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { groupStorageDisks } from "../storage-disks.js";
+import { groupStorageDisks } from "../server/storage-disks.js";
 
 test("groups paths on the same volume despite small free-space differences", () => {
   const disks = [

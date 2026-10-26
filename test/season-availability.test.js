@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { getSeasonAvailability } from "../season-availability.js";
+import { getSeasonAvailability } from "../server/season-availability.js";
 
 const now = Date.parse("2026-10-25T12:00:00Z");
 function episodes({ downloaded, aired, total = 10, monitored = true }) {

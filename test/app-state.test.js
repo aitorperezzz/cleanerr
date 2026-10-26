@@ -12,10 +12,11 @@ function libraryResponse(path, revision = "instance-A") {
 test("saving a different instance removes old library IDs and action credentials from the app", async () => {
   const app = await appHarness(async path => path.startsWith("/api/settings/")
     ? jsonResponse({ service: { url: "http://new-radarr" }, complete: true })
+    : path === "/api/settings" ? jsonResponse({ services: { radarr: {} }, complete: true })
     : path === "/api/storage" ? jsonResponse({ disks: [], errors: [] }) : libraryResponse(path));
   await app.loadLibrary();
   assert.equal(app.snapshot().libraryItems.length, 1);
-  app.setSettings({ services: { radarr: {} } });
+  await app.loadSettings();
   const button = app.getElement("save-button");
   const form = { dataset: { service: "radarr" }, elements: { url: { value: "http://new-radarr" }, apiKey: { value: "new-key" } }, querySelector: () => button };
   await app.saveServiceSettings(form);

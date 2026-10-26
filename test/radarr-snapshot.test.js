@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createRadarrSnapshot } from "../radarr-snapshot.js";
+import { createRadarrSnapshot } from "../server/radarr-snapshot.js";
 
 test("concurrent readers share one Radarr movie and collection request", async () => {
   const calls = [];

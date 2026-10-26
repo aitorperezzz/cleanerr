@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { requireLibraryRevision } from "../request-guards.js";
+import { requireLibraryRevision } from "../server/request-guards.js";
 
 test("actions require the configuration revision used to load the library", () => {
   for (const revision of [undefined, "old-instance"]) {

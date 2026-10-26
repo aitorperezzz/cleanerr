@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createServiceTransport } from "../service-transport.js";
+import { createServiceTransport } from "../server/service-transport.js";
 
 const radarr = { label: "Radarr", url: "http://radarr:7878", apiKey: "key" };
 
